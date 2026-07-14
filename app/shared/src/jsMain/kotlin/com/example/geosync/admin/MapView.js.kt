@@ -12,7 +12,9 @@ import com.example.geosync.network.StoredLocation
 @Composable
 actual fun GoogleMapView(
     modifier: Modifier,
-    locations: Map<String, StoredLocation>
+    locations: Map<String, StoredLocation>,
+    selectedClientId: String?,
+    focusTrigger: Long
 ) {
     Box(modifier = modifier.background(Color.DarkGray)) {
         Text("Map not supported on JS yet", color = Color.White, modifier = Modifier.align(Alignment.Center))

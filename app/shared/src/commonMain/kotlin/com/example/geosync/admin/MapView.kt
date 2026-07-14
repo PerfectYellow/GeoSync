@@ -7,5 +7,7 @@ import com.example.geosync.network.StoredLocation
 @Composable
 expect fun GoogleMapView(
     modifier: Modifier,
-    locations: Map<String, StoredLocation>
+    locations: Map<String, StoredLocation>,
+    selectedClientId: String? = null,
+    focusTrigger: Long = 0L
 )

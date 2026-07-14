@@ -60,6 +60,8 @@ fun AdminContent(
     var clientIdInput by remember { mutableStateOf("") }
     var isMapExpanded by remember { mutableStateOf(false) }
     var isListExpanded by remember { mutableStateOf(false) }
+    var selectedClientId by remember { mutableStateOf<String?>(null) }
+    var focusTrigger by remember { mutableStateOf(0L) }
     
     val isInputValid = remember(clientIdInput) {
         clientIdInput.isEmpty() || clientIdInput.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex())
@@ -190,7 +192,12 @@ fun AdminContent(
                                     ClientListItem(
                                         id = id,
                                         location = locations[id],
-                                        onRemove = { onRemoveClient(id) }
+                                        isAdminConnected = isConnected,
+                                        onRemove = { onRemoveClient(id) },
+                                        onClick = { 
+                                            selectedClientId = id
+                                            focusTrigger++
+                                        }
                                     )
                                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
                                 }
@@ -208,6 +215,8 @@ fun AdminContent(
                 onMapToggle(isMapExpanded)
             },
             locations = locations,
+            selectedClientId = selectedClientId,
+            focusTrigger = focusTrigger,
             modifier = Modifier
                 .weight(1f)
                 .then(
@@ -246,13 +255,15 @@ fun ConnectionStatus(isConnected: Boolean, onRetry: () -> Unit) {
 }
 
 @Composable
-fun ClientListItem(id: String, location: StoredLocation?, onRemove: () -> Unit) {
+fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Boolean, onRemove: () -> Unit, onClick: () -> Unit) {
     val isOnline = location?.isOnline ?: false
     val shortId = if (id.length > 13) "${id.take(6)}...${id.takeLast(4)}" else id
     
     Surface(
         color = Color.Transparent,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Row(
             modifier = Modifier
@@ -265,18 +276,30 @@ fun ClientListItem(id: String, location: StoredLocation?, onRemove: () -> Unit) 
                 modifier = Modifier
                     .size(40.dp)
                     .background(
-                        color = if (location == null) MaterialTheme.colorScheme.surfaceVariant
-                                else if (isOnline) Color(0xFFE8F5E9) else Color(0xFFF5F5F5),
+                        color = when {
+                            !isAdminConnected -> MaterialTheme.colorScheme.surfaceVariant
+                            location == null -> MaterialTheme.colorScheme.surfaceVariant
+                            isOnline -> Color(0xFFE8F5E9)
+                            else -> Color(0xFFF5F5F5)
+                        },
                         shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = if (isOnline) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    imageVector = when {
+                        !isAdminConnected -> Icons.Default.Warning
+                        isOnline -> Icons.Default.CheckCircle
+                        else -> Icons.Default.Warning
+                    },
                     contentDescription = null,
                     modifier = Modifier.size(20.dp),
-                    tint = if (location == null) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                           else if (isOnline) Color(0xFF2E7D32) else Color.Gray
+                    tint = when {
+                        !isAdminConnected -> Color.Gray
+                        location == null -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        isOnline -> Color(0xFF2E7D32)
+                        else -> Color.Gray
+                    }
                 )
             }
 
@@ -292,11 +315,21 @@ fun ClientListItem(id: String, location: StoredLocation?, onRemove: () -> Unit) 
                     Spacer(Modifier.width(8.dp))
                     // Status Badge
                     Surface(
-                        color = if (isOnline) Color(0xFF2E7D32) else Color.Gray,
+                        color = when {
+                            !isAdminConnected -> Color.Gray
+                            location == null -> Color.LightGray
+                            isOnline -> Color(0xFF2E7D32)
+                            else -> Color.Gray
+                        },
                         shape = RoundedCornerShape(4.dp)
                     ) {
                         Text(
-                            text = if (location == null) "WAITING" else if (isOnline) "LIVE" else "OFFLINE",
+                            text = when {
+                                !isAdminConnected -> "DISCONNECTED"
+                                location == null -> "WAITING"
+                                isOnline -> "LIVE"
+                                else -> "OFFLINE"
+                            },
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White,
@@ -306,11 +339,18 @@ fun ClientListItem(id: String, location: StoredLocation?, onRemove: () -> Unit) 
                 }
                 
                 Text(
-                    text = if (location != null) {
-                        "${location.latitude.toString().take(8)}, ${location.longitude.toString().take(8)}"
-                    } else "No location data received yet",
+                    text = when {
+                        !isAdminConnected -> "Admin connection lost"
+                        location != null -> {
+                            val lat = location.latitude.toString().take(8)
+                            val lng = location.longitude.toString().take(8)
+                            val status = if (isOnline) "Live" else "Last seen"
+                            "$status: $lat, $lng"
+                        }
+                        else -> "Waiting for location sync..."
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (!isAdminConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -330,6 +370,8 @@ fun MapPreview(
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
     locations: Map<String, StoredLocation>,
+    selectedClientId: String? = null,
+    focusTrigger: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -343,7 +385,9 @@ fun MapPreview(
             if (!LocalInspectionMode.current) {
                 GoogleMapView(
                     modifier = Modifier.fillMaxSize(),
-                    locations = locations
+                    locations = locations,
+                    selectedClientId = selectedClientId,
+                    focusTrigger = focusTrigger
                 )
             } else {
                 Box(

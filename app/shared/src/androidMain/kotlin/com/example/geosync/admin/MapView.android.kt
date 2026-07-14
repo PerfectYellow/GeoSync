@@ -21,7 +21,9 @@ import org.osmdroid.views.overlay.Marker
 @Composable
 actual fun GoogleMapView(
     modifier: Modifier,
-    locations: Map<String, StoredLocation>
+    locations: Map<String, StoredLocation>,
+    selectedClientId: String?,
+    focusTrigger: Long
 ) {
     // OpenStreetMap needs a user agent to download tiles
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -31,6 +33,9 @@ actual fun GoogleMapView(
 
     // Track which locations we've already centered on to avoid jumping
     var centeredClientIds by remember { mutableStateOf(setOf<String>()) }
+    
+    // Remember the last trigger to detect manual clicks
+    var lastFocusTrigger by remember { mutableStateOf(0L) }
 
     AndroidView(
         modifier = modifier,
@@ -69,7 +74,19 @@ actual fun GoogleMapView(
                     mapView.controller.animateTo(point)
                     centeredClientIds = centeredClientIds + id
                 }
+                
+                // If this client was explicitly selected or re-clicked, focus on them
+                if (id == selectedClientId && focusTrigger != lastFocusTrigger) {
+                    mapView.controller.animateTo(point)
+                    lastFocusTrigger = focusTrigger
+                }
             }
+            
+            // Sync the trigger state if a different client was selected
+            if (focusTrigger != lastFocusTrigger) {
+                lastFocusTrigger = focusTrigger
+            }
+
             mapView.invalidate() // Refresh map
         }
     )

@@ -84,6 +84,10 @@ class AdminViewModel : ViewModel() {
                     }
                 } catch (e: Exception) {
                     _isConnected.value = false
+                    // Mark all clients as offline when Admin connection is lost
+                    _locations.update { current ->
+                        current.mapValues { it.value.copy(isOnline = false) }
+                    }
                     if (!errorNotified) {
                         NotificationManager.show("Connection lost: ${e.message}", NotificationType.ERROR)
                         errorNotified = true
