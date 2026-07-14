@@ -1,0 +1,65 @@
+package com.example.geosync.client
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.geosync.NotificationManager
+import com.example.geosync.NotificationType
+import com.example.geosync.network.*
+import io.ktor.client.plugins.websocket.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+import kotlin.random.Random
+import kotlinx.datetime.Clock
+
+class ClientViewModel : ViewModel() {
+    private val tracker = getPlatformTracker()
+
+    val connectionStatus = TrackingStatus.status
+    val connectionError = TrackingStatus.errorMessage
+
+    private val _trackingId = MutableStateFlow("")
+    val trackingId: StateFlow<String> = _trackingId.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            connectionStatus.collect { status ->
+                if (status == ConnectionStatus.FAILED) {
+                    // Auto-hide error after 5 seconds
+                    delay(5000)
+                    if (TrackingStatus.status.value == ConnectionStatus.FAILED) {
+                        TrackingStatus.updateStatus(ConnectionStatus.IDLE)
+                    }
+                }
+            }
+        }
+    }
+
+    fun toggleTracking() {
+        val status = connectionStatus.value
+        if (status == ConnectionStatus.CONNECTED || status == ConnectionStatus.CONNECTING) {
+            stopTracking()
+        } else {
+            startTracking()
+        }
+    }
+
+    private fun startTracking() {
+        val id = generateTrackingId()
+        _trackingId.value = id
+        
+        tracker.startTracking(id)
+        NotificationManager.show("Initializing broadcast...", NotificationType.INFO)
+    }
+
+    private fun stopTracking() {
+        tracker.stopTracking()
+        TrackingStatus.updateStatus(ConnectionStatus.IDLE)
+        NotificationManager.show("Tracking stopped", NotificationType.INFO)
+    }
+
+    private fun generateTrackingId(): String {
+        val chars = "0123456789abcdef"
+        val id = (1..32).map { chars[Random.nextInt(chars.length)] }.joinToString("")
+        return "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}"
+    }
+}
