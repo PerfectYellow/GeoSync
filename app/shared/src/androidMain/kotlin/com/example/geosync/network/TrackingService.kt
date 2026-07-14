@@ -46,11 +46,7 @@ class TrackingService : Service() {
         trackingJob = serviceScope.launch {
             TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
             try {
-                geoHttpClient.webSocket(
-                    host = ApiConfig.HOST,
-                    port = ApiConfig.PORT,
-                    path = ApiConfig.WS_LIVE_PATH
-                ) {
+                geoHttpClient.geoLiveWebSocket {
                     TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
                     GeoNotificationManager.show("Connected to relay", NotificationType.SUCCESS)
                     sendSerialized(LiveLocationMessage(type = "client.register", clientId = id))

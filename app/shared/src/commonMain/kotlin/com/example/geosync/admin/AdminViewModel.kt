@@ -39,11 +39,7 @@ class AdminViewModel : ViewModel() {
         connectionJob = viewModelScope.launch {
             while (isActive) {
                 try {
-                    client.webSocket(
-                        host = ApiConfig.HOST,
-                        port = ApiConfig.PORT,
-                        path = ApiConfig.WS_LIVE_PATH
-                    ) {
+                    client.geoLiveWebSocket {
                         session = this
                         _isConnected.value = true
                         errorNotified = false // Reset error notification state on success
