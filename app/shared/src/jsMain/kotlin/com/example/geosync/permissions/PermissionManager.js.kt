@@ -11,9 +11,12 @@ actual fun rememberPermissionState(
     return remember {
         object : PermissionState {
             override val hasPermission: Boolean = true
+            override val shouldShowRationale: Boolean = false
+            override val isPermanentlyDenied: Boolean = false
             override fun launchPermissionRequest() {
                 onResult(true)
             }
+            override fun openSettings() {}
         }
     }
 }

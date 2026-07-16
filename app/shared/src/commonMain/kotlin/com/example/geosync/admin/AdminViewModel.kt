@@ -3,6 +3,7 @@ package com.example.geosync.admin
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.geosync.*
+import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.network.*
 import io.ktor.client.plugins.websocket.*
 import kotlinx.coroutines.*
@@ -39,11 +40,12 @@ class AdminViewModel : ViewModel() {
         connectionJob = viewModelScope.launch {
             while (isActive) {
                 try {
+                    val strings = LocalizationManager.strings
                     client.geoLiveWebSocket {
                         session = this
                         _isConnected.value = true
                         errorNotified = false // Reset error notification state on success
-                        NotificationManager.show("Connected to Server", NotificationType.SUCCESS)
+                        NotificationManager.show(strings.connectedToServer, NotificationType.SUCCESS)
 
                         // 1. Register as admin
                         sendSerialized(LiveLocationMessage(type = "admin.register"))
@@ -70,26 +72,27 @@ class AdminViewModel : ViewModel() {
                                 "admin.subscribed" -> {
                                     // Successfully subscribed to client(s)
                                     event.clientIds?.forEach { id ->
-                                        NotificationManager.show("Subscribed to $id", NotificationType.SUCCESS)
+                                        NotificationManager.show(strings.subscribedTo(id), NotificationType.SUCCESS)
                                     }
                                 }
                                 "admin.unsubscribed" -> {
                                     // Successfully unsubscribed
                                 }
                                 "error" -> {
-                                    NotificationManager.show("Server error: ${event.message}", NotificationType.ERROR)
+                                    NotificationManager.show(strings.serverError(event.message), NotificationType.ERROR)
                                 }
                             }
                         }
                     }
                 } catch (e: Exception) {
+                    val strings = LocalizationManager.strings
                     _isConnected.value = false
                     // Mark all clients as offline when Admin connection is lost
                     _locations.update { current ->
                         current.mapValues { it.value.copy(isOnline = false) }
                     }
                     if (!errorNotified) {
-                        NotificationManager.show("Connection lost: ${e.message}", NotificationType.ERROR)
+                        NotificationManager.show(strings.connectionLost(e.message), NotificationType.ERROR)
                         errorNotified = true
                     }
                     delay(5000)
@@ -103,16 +106,17 @@ class AdminViewModel : ViewModel() {
 
     fun addClient(rawClientId: String) {
         val clientId = rawClientId.trim().lowercase()
+        val strings = LocalizationManager.strings
         if (clientId.isBlank()) return
         
         val uuidRegex = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex()
         if (!clientId.matches(uuidRegex)) {
-            NotificationManager.show("Invalid Client ID format. Must be a valid UUID.", NotificationType.ERROR)
+            NotificationManager.show(strings.invalidClientIdUuid, NotificationType.ERROR)
             return
         }
         
         if (_trackedClientIds.value.contains(clientId)) {
-            NotificationManager.show("Client $clientId is already being tracked", NotificationType.INFO)
+            NotificationManager.show(strings.clientAlreadyTracked(clientId), NotificationType.INFO)
             return
         }
 
@@ -126,16 +130,17 @@ class AdminViewModel : ViewModel() {
                         clientIds = listOf(clientId)
                     ))
                 } else {
-                    NotificationManager.show("Waiting for connection...", NotificationType.INFO)
+                    NotificationManager.show(strings.waitingForConnection, NotificationType.INFO)
                 }
             } catch (e: Exception) {
-                NotificationManager.show("Failed to subscribe: ${e.message}", NotificationType.ERROR)
+                NotificationManager.show(strings.failedToSubscribe(e.message), NotificationType.ERROR)
             }
         }
     }
 
     fun removeClient(rawClientId: String) {
         val clientId = rawClientId.lowercase()
+        val strings = LocalizationManager.strings
         _trackedClientIds.update { it - clientId }
         _locations.update { it - clientId }
 
@@ -145,9 +150,9 @@ class AdminViewModel : ViewModel() {
                     type = "admin.unsubscribe",
                     clientIds = listOf(clientId)
                 ))
-                NotificationManager.show("Removed $clientId", NotificationType.INFO)
+                NotificationManager.show(strings.removedClient(clientId), NotificationType.INFO)
             } catch (e: Exception) {
-                NotificationManager.show("Failed to unsubscribe: ${e.message}", NotificationType.ERROR)
+                NotificationManager.show(strings.failedToUnsubscribe(e.message), NotificationType.ERROR)
             }
         }
     }

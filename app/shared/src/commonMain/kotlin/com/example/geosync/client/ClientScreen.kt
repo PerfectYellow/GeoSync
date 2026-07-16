@@ -24,10 +24,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.collectAsState
+import com.example.geosync.localization.LocalStrings
 import com.example.geosync.permissions.PermissionNames
 import com.example.geosync.permissions.rememberPermissionState
 import com.example.geosync.network.ConnectionStatus
+import com.example.geosync.network.ConnectivityStatus
+import com.example.geosync.network.rememberConnectivityObserver
+import com.example.geosync.LanguageSelector
 import com.example.geosync.NotificationBanner
+import com.example.geosync.NotificationManager
 
 @Composable
 fun ClientScreen(
@@ -38,11 +43,20 @@ fun ClientScreen(
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
 
+    val connectivityObserver = rememberConnectivityObserver()
+    val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
+
+    var showPermissionRationale by remember { mutableStateOf(false) }
+
     val locationPermissionState = rememberPermissionState(
         permission = PermissionNames.LOCATION,
         onResult = { isGranted ->
             if (isGranted) {
-                viewModel.toggleTracking()
+                if (networkStatus == ConnectivityStatus.Offline) {
+                    NotificationManager.showOffline()
+                } else {
+                    viewModel.toggleTracking()
+                }
             }
         }
     )
@@ -53,18 +67,87 @@ fun ClientScreen(
             connectionStatus = connectionStatus,
             connectionError = connectionError,
             onToggleTracking = {
-                if (locationPermissionState.hasPermission) {
+                if (networkStatus == ConnectivityStatus.Offline) {
+                    NotificationManager.showOffline()
+                } else if (locationPermissionState.hasPermission) {
                     viewModel.toggleTracking()
                 } else {
-                    locationPermissionState.launchPermissionRequest()
+                    showPermissionRationale = true
                 }
             },
             paddingValues = paddingValues
         )
+
+        if (showPermissionRationale) {
+            PermissionDialog(
+                isPermanentlyDenied = locationPermissionState.isPermanentlyDenied,
+                onDismiss = { showPermissionRationale = false },
+                onGrant = {
+                    showPermissionRationale = false
+                    locationPermissionState.launchPermissionRequest()
+                },
+                onOpenSettings = {
+                    showPermissionRationale = false
+                    locationPermissionState.openSettings()
+                }
+            )
+        }
         
         // Floating notification at the top
         NotificationBanner()
     }
+}
+
+@Composable
+fun PermissionDialog(
+    isPermanentlyDenied: Boolean,
+    onDismiss: () -> Unit,
+    onGrant: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val strings = LocalStrings.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (isPermanentlyDenied) strings.permissionBlocked else strings.locationAccessRequired,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Text(
+                text = if (isPermanentlyDenied) {
+                    strings.locationPermissionDeniedPermanently
+                } else {
+                    strings.locationPermissionRationale
+                },
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = if (isPermanentlyDenied) onOpenSettings else onGrant,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(if (isPermanentlyDenied) strings.openSettings else strings.grantPermission)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.cancel)
+            }
+        },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        icon = {
+            Icon(
+                imageVector = if (isPermanentlyDenied) Icons.Default.Settings else Icons.Default.LocationOn,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+    )
 }
 
 @Composable
@@ -77,28 +160,39 @@ fun ClientScreenContent(
 ) {
     val clipboardManager = LocalClipboardManager.current
     val isConnected = connectionStatus == ConnectionStatus.CONNECTED
+    val strings = LocalStrings.current
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.statusBars)
             .padding(paddingValues)
             .padding(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Descriptive Header
-        Text(
-            text = "Client Portal",
-            style = MaterialTheme.typography.displaySmall,
-            fontWeight = FontWeight.Black,
-            color = MaterialTheme.colorScheme.primary
-        )
-        
-        Text(
-            text = "Location Synchronization",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.padding(bottom = 24.dp)
-        )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = strings.clientPortal,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                LanguageSelector()
+            }
+
+            Text(
+                text = strings.locationSynchronization,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(bottom = 24.dp)
+            )
+        }
 
         Box(
             modifier = Modifier
@@ -148,7 +242,7 @@ fun ClientScreenContent(
                 )
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    text = "Your data is only visible to authorized administrators.",
+                    text = strings.dataVisibilityInfo,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -159,6 +253,7 @@ fun ClientScreenContent(
 
 @Composable
 private fun IdleView(onStart: () -> Unit, isLoading: Boolean) {
+    val strings = LocalStrings.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -181,13 +276,13 @@ private fun IdleView(onStart: () -> Unit, isLoading: Boolean) {
         Spacer(modifier = Modifier.height(32.dp))
         
         Text(
-            text = "Ready to Sync?",
+            text = strings.readyToSync,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold
         )
         
         Text(
-            text = "Press the button below to start broadcasting your position to the network.",
+            text = strings.startBroadcastingDesc,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp),
@@ -207,7 +302,7 @@ private fun IdleView(onStart: () -> Unit, isLoading: Boolean) {
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
             } else {
-                Text("Start Tracking", style = MaterialTheme.typography.titleMedium)
+                Text(strings.startTracking, style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -220,6 +315,7 @@ private fun TrackingView(
     onStop: () -> Unit, 
     onCopy: () -> Unit
 ) {
+    val strings = LocalStrings.current
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -244,7 +340,7 @@ private fun TrackingView(
         Spacer(modifier = Modifier.height(24.dp))
         
         Text(
-            text = "now your location tracking",
+            text = strings.nowTracking,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF2E7D32)
@@ -268,7 +364,7 @@ private fun TrackingView(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "SESSION UUID",
+                    text = strings.sessionUuid,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary
                 )
@@ -288,7 +384,7 @@ private fun TrackingView(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "Tap to copy ID",
+                        text = strings.tapToCopyId,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -308,7 +404,7 @@ private fun TrackingView(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
         ) {
-            Text("Stop Tracking")
+            Text(strings.stopTracking)
         }
     }
 }

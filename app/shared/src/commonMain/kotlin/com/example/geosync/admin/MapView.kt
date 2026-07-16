@@ -9,5 +9,7 @@ expect fun GoogleMapView(
     modifier: Modifier,
     locations: Map<String, StoredLocation>,
     selectedClientId: String? = null,
-    focusTrigger: Long = 0L
+    focusTrigger: Long = 0L,
+    defaultLatitude: Double? = null,
+    defaultLongitude: Double? = null
 )

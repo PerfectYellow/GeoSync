@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.geosync.NotificationManager
 import com.example.geosync.NotificationType
+import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.network.*
 import io.ktor.client.plugins.websocket.*
 import kotlinx.coroutines.*
@@ -48,13 +49,13 @@ class ClientViewModel : ViewModel() {
         _trackingId.value = id
         
         tracker.startTracking(id)
-        NotificationManager.show("Initializing broadcast...", NotificationType.INFO)
+        NotificationManager.show(LocalizationManager.strings.initializingBroadcast, NotificationType.INFO)
     }
 
     private fun stopTracking() {
         tracker.stopTracking()
         TrackingStatus.updateStatus(ConnectionStatus.IDLE)
-        NotificationManager.show("Tracking stopped", NotificationType.INFO)
+        NotificationManager.show(LocalizationManager.strings.trackingStopped, NotificationType.INFO)
     }
 
     private fun generateTrackingId(): String {

@@ -22,7 +22,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.geosync.NotificationManager
+import com.example.geosync.LanguageSelector
+import com.example.geosync.localization.LocalStrings
+import com.example.geosync.network.ConnectivityStatus
 import com.example.geosync.network.StoredLocation
+import com.example.geosync.network.rememberConnectivityObserver
 
 @Composable
 fun AdminScreen(
@@ -34,8 +39,22 @@ fun AdminScreen(
     val trackedClientIds by viewModel.trackedClientIds.collectAsState()
     val locations by viewModel.locations.collectAsState()
 
+    val connectivityObserver = rememberConnectivityObserver()
+    val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
+
+    LaunchedEffect(connectivityObserver) {
+        connectivityObserver.observe().collect { status ->
+            if (status == ConnectivityStatus.Offline) {
+                NotificationManager.showOffline()
+            } else {
+                NotificationManager.dismissOffline()
+            }
+        }
+    }
+
     AdminContent(
         isConnected = isConnected,
+        networkStatus = networkStatus,
         trackedClientIds = trackedClientIds,
         locations = locations,
         paddingValues = paddingValues,
@@ -49,6 +68,7 @@ fun AdminScreen(
 @Composable
 fun AdminContent(
     isConnected: Boolean,
+    networkStatus: ConnectivityStatus,
     trackedClientIds: Set<String>,
     locations: Map<String, StoredLocation>,
     paddingValues: PaddingValues = PaddingValues(0.dp),
@@ -62,6 +82,7 @@ fun AdminContent(
     var isListExpanded by remember { mutableStateOf(false) }
     var selectedClientId by remember { mutableStateOf<String?>(null) }
     var focusTrigger by remember { mutableStateOf(0L) }
+    val strings = LocalStrings.current
     
     val isInputValid = remember(clientIdInput) {
         clientIdInput.isEmpty() || clientIdInput.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex())
@@ -70,6 +91,7 @@ fun AdminContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.statusBars)
             .padding(top = paddingValues.calculateTopPadding()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -78,19 +100,21 @@ fun AdminContent(
                 modifier = Modifier.padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
-                            text = "Admin Portal",
+                            text = strings.adminPortal,
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
                         )
-                        ConnectionStatus(isConnected, onRetryConnection)
+                        LanguageSelector()
                     }
+                    ConnectionStatus(isConnected, networkStatus, onRetryConnection)
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -98,9 +122,9 @@ fun AdminContent(
                 OutlinedTextField(
                     value = clientIdInput,
                     onValueChange = { clientIdInput = it },
-                    label = { Text("Client ID to Track") },
+                    label = { Text(strings.clientIdToTrack) },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Enter client ID...") },
+                    placeholder = { Text(strings.enterClientId) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
                         IconButton(
@@ -112,7 +136,7 @@ fun AdminContent(
                             },
                             enabled = clientIdInput.isNotEmpty()
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Client")
+                            Icon(Icons.Default.Add, contentDescription = strings.addClient)
                         }
                     },
                     isError = !isInputValid,
@@ -146,7 +170,7 @@ fun AdminContent(
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = "Invalid UUID format (e.g. 123e4567-e89b...)",
+                            text = strings.invalidUuidFormat,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -164,7 +188,7 @@ fun AdminContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Tracked Clients (${trackedClientIds.size})",
+                        text = strings.trackedClients(trackedClientIds.size),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f)
@@ -184,7 +208,7 @@ fun AdminContent(
                     ) {
                         if (trackedClientIds.isEmpty()) {
                             Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                                Text("No clients added yet", style = MaterialTheme.typography.bodyMedium)
+                                Text(strings.noClientsAdded, style = MaterialTheme.typography.bodyMedium)
                             }
                         } else {
                             LazyColumn {
@@ -193,6 +217,7 @@ fun AdminContent(
                                         id = id,
                                         location = locations[id],
                                         isAdminConnected = isConnected,
+                                        networkStatus = networkStatus,
                                         onRemove = { onRemoveClient(id) },
                                         onClick = { 
                                             selectedClientId = id
@@ -235,19 +260,33 @@ fun AdminContent(
 }
 
 @Composable
-fun ConnectionStatus(isConnected: Boolean, onRetry: () -> Unit) {
+fun ConnectionStatus(isConnected: Boolean, networkStatus: ConnectivityStatus, onRetry: () -> Unit) {
+    val isOffline = networkStatus == ConnectivityStatus.Offline
+    val strings = LocalStrings.current
+    
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.clickable(enabled = !isConnected) { onRetry() }
+        modifier = Modifier.clickable(enabled = !isConnected && !isOffline) { onRetry() }
     ) {
         Box(
             modifier = Modifier
                 .size(8.dp)
-                .background(if (isConnected) Color.Green else Color.Red, MaterialTheme.shapes.extraSmall)
+                .background(
+                    color = when {
+                        isConnected -> Color.Green
+                        isOffline -> Color.Gray
+                        else -> Color.Red
+                    }, 
+                    shape = MaterialTheme.shapes.extraSmall
+                )
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = if (isConnected) "Connected to Server" else "Offline - Tap to Retry",
+            text = when {
+                isConnected -> strings.connectedToServer
+                isOffline -> strings.youAreOffline
+                else -> strings.offlineTapToRetry
+            },
             style = MaterialTheme.typography.labelSmall,
             color = if (isConnected) Color.Unspecified else MaterialTheme.colorScheme.error
         )
@@ -255,9 +294,18 @@ fun ConnectionStatus(isConnected: Boolean, onRetry: () -> Unit) {
 }
 
 @Composable
-fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Boolean, onRemove: () -> Unit, onClick: () -> Unit) {
+fun ClientListItem(
+    id: String, 
+    location: StoredLocation?, 
+    isAdminConnected: Boolean, 
+    networkStatus: ConnectivityStatus,
+    onRemove: () -> Unit, 
+    onClick: () -> Unit
+) {
     val isOnline = location?.isOnline ?: false
     val shortId = if (id.length > 13) "${id.take(6)}...${id.takeLast(4)}" else id
+    val isDeviceOffline = networkStatus == ConnectivityStatus.Offline
+    val strings = LocalStrings.current
     
     Surface(
         color = Color.Transparent,
@@ -277,6 +325,7 @@ fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Bool
                     .size(40.dp)
                     .background(
                         color = when {
+                            isDeviceOffline -> MaterialTheme.colorScheme.surfaceVariant
                             !isAdminConnected -> MaterialTheme.colorScheme.surfaceVariant
                             location == null -> MaterialTheme.colorScheme.surfaceVariant
                             isOnline -> Color(0xFFE8F5E9)
@@ -288,6 +337,7 @@ fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Bool
             ) {
                 Icon(
                     imageVector = when {
+                        isDeviceOffline -> Icons.Default.Warning
                         !isAdminConnected -> Icons.Default.Warning
                         isOnline -> Icons.Default.CheckCircle
                         else -> Icons.Default.Warning
@@ -295,6 +345,7 @@ fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Bool
                     contentDescription = null,
                     modifier = Modifier.size(20.dp),
                     tint = when {
+                        isDeviceOffline -> Color.Gray
                         !isAdminConnected -> Color.Gray
                         location == null -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         isOnline -> Color(0xFF2E7D32)
@@ -316,6 +367,7 @@ fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Bool
                     // Status Badge
                     Surface(
                         color = when {
+                            isDeviceOffline -> Color.Gray
                             !isAdminConnected -> Color.Gray
                             location == null -> Color.LightGray
                             isOnline -> Color(0xFF2E7D32)
@@ -325,10 +377,11 @@ fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Bool
                     ) {
                         Text(
                             text = when {
-                                !isAdminConnected -> "DISCONNECTED"
-                                location == null -> "WAITING"
-                                isOnline -> "LIVE"
-                                else -> "OFFLINE"
+                                isDeviceOffline -> strings.statusOffline
+                                !isAdminConnected -> strings.statusDisconnected
+                                location == null -> strings.statusWaiting
+                                isOnline -> strings.statusLive
+                                else -> strings.statusOffline
                             },
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
@@ -340,24 +393,25 @@ fun ClientListItem(id: String, location: StoredLocation?, isAdminConnected: Bool
                 
                 Text(
                     text = when {
-                        !isAdminConnected -> "Admin connection lost"
+                        isDeviceOffline -> strings.youAreOffline
+                        !isAdminConnected -> strings.adminConnectionLost
                         location != null -> {
                             val lat = location.latitude.toString().take(8)
                             val lng = location.longitude.toString().take(8)
-                            val status = if (isOnline) "Live" else "Last seen"
+                            val status = if (isOnline) strings.statusLive else strings.lastSeen
                             "$status: $lat, $lng"
                         }
-                        else -> "Waiting for location sync..."
+                        else -> strings.waitingForLocationSync
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (!isAdminConnected) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (!isAdminConnected || isDeviceOffline) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             IconButton(onClick = onRemove) {
                 Icon(
                     Icons.Default.Delete,
-                    contentDescription = "Remove",
+                    contentDescription = strings.remove,
                     tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                 )
             }
@@ -374,6 +428,7 @@ fun MapPreview(
     focusTrigger: Long = 0L,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalStrings.current
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = if (isExpanded) RectangleShape else MaterialTheme.shapes.medium,
@@ -387,7 +442,9 @@ fun MapPreview(
                     modifier = Modifier.fillMaxSize(),
                     locations = locations,
                     selectedClientId = selectedClientId,
-                    focusTrigger = focusTrigger
+                    focusTrigger = focusTrigger,
+                    defaultLatitude = 35.744722,
+                    defaultLongitude = 51.375278
                 )
             } else {
                 Box(
@@ -396,7 +453,7 @@ fun MapPreview(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.LocationOn, null, tint = MaterialTheme.colorScheme.primary)
-                        Text("Map Preview", style = MaterialTheme.typography.labelSmall)
+                        Text(strings.mapPreview, style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -410,7 +467,7 @@ fun MapPreview(
             ) {
                 Icon(
                     imageVector = if (isExpanded) Icons.Default.Close else Icons.Default.Add,
-                    contentDescription = if (isExpanded) "Collapse Map" else "Expand Map"
+                    contentDescription = if (isExpanded) strings.collapseMap else strings.expandMap
                 )
             }
         }
@@ -424,6 +481,7 @@ fun AdminScreenPreview() {
         Surface {
             AdminContent(
                 isConnected = true,
+                networkStatus = ConnectivityStatus.Online,
                 trackedClientIds = setOf("Client-1", "Client-2"),
                 locations = mapOf(
                     "Client-1" to StoredLocation("Client-1", 37.7749, -122.4194, isOnline = true),

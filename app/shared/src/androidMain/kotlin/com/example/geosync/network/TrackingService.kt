@@ -15,6 +15,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.geosync.NotificationManager as GeoNotificationManager
 import com.example.geosync.NotificationType
+import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.network.LiveLocationMessage
 import com.example.geosync.network.geoHttpClient
 import com.example.geosync.network.ApiConfig
@@ -47,15 +48,17 @@ class TrackingService : Service() {
             if (isFromGps || (isNewer && isAccurateEnough)) {
                 lastLocation = location
                 // Update notification with provider info for debugging
-                createNotification("Tracking active: ${location.provider} (${location.accuracy.toInt()}m)")
+                val strings = LocalizationManager.strings
+                createNotification(strings.trackingActiveWithAccuracy(location.provider ?: "Unknown", location.accuracy.toInt()))
             }
         }
         @Deprecated("Deprecated in Java")
         override fun onStatusChanged(provider: String, status: Int, extras: android.os.Bundle?) {}
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {
-            TrackingStatus.updateStatus(ConnectionStatus.FAILED, "GPS Disabled")
-            GeoNotificationManager.show("GPS is disabled", NotificationType.ERROR)
+            val strings = LocalizationManager.strings
+            TrackingStatus.updateStatus(ConnectionStatus.FAILED, strings.gpsDisabled)
+            GeoNotificationManager.show(strings.gpsDisabled, NotificationType.ERROR)
         }
     }
 
@@ -70,22 +73,23 @@ class TrackingService : Service() {
         when (intent?.action) {
             "START_TRACKING" -> {
                 val trackingId = intent.getStringExtra("TRACKING_ID") ?: return START_NOT_STICKY
+                val strings = LocalizationManager.strings
                 
                 // ALWAYS call startForeground first to avoid "ForegroundServiceDidNotStartInTimeException"
                 // On Android 14+ (API 34), we must specify the foreground service type
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     startForeground(
                         1, 
-                        createNotification("GeoSync is initializing..."),
+                        createNotification(strings.geoSyncInitializing),
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
                     )
                 } else {
-                    startForeground(1, createNotification("GeoSync is initializing..."))
+                    startForeground(1, createNotification(strings.geoSyncInitializing))
                 }
 
                 if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                    GeoNotificationManager.show("GPS is turned off. Please enable it.", NotificationType.ERROR)
-                    TrackingStatus.updateStatus(ConnectionStatus.FAILED, "GPS is off")
+                    GeoNotificationManager.show(strings.gpsOffEnableIt, NotificationType.ERROR)
+                    TrackingStatus.updateStatus(ConnectionStatus.FAILED, strings.gpsOffEnableIt)
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                     return START_NOT_STICKY
@@ -128,10 +132,10 @@ class TrackingService : Service() {
                     )
                     
                     // Update notification text with active ID
-                    createNotification("Tracking active: $trackingId")
+                    createNotification(strings.trackingActive(trackingId))
                 } catch (e: SecurityException) {
-                    GeoNotificationManager.show("Location permission denied", NotificationType.ERROR)
-                    TrackingStatus.updateStatus(ConnectionStatus.FAILED, "Permission denied")
+                    GeoNotificationManager.show(strings.locationPermissionDenied, NotificationType.ERROR)
+                    TrackingStatus.updateStatus(ConnectionStatus.FAILED, strings.locationPermissionDenied)
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                     return START_NOT_STICKY
@@ -152,10 +156,11 @@ class TrackingService : Service() {
         trackingJob?.cancel()
         trackingJob = serviceScope.launch {
             TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
+            val strings = LocalizationManager.strings
             try {
                 geoHttpClient.geoLiveWebSocket {
                     TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
-                    GeoNotificationManager.show("Connected to relay", NotificationType.SUCCESS)
+                    GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
                     sendSerialized(LiveLocationMessage(type = "client.register", clientId = id))
                     
                     while (isActive) {
@@ -170,14 +175,14 @@ class TrackingService : Service() {
                                 timestamp = Clock.System.now().toString()
                             ))
                         } else {
-                            GeoNotificationManager.show("Waiting for GPS fix...", NotificationType.INFO)
+                            GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
                         }
                         delay(3000)
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                val errorMsg = "Connection failed: ${e.message}"
+                val errorMsg = strings.connectionFailed(e.message)
                 TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
                 GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
             } finally {
@@ -194,9 +199,10 @@ class TrackingService : Service() {
     }
 
     private fun createNotificationChannel() {
+        val strings = LocalizationManager.strings
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Location Tracking",
+            strings.locationTrackingChannel,
             android.app.NotificationManager.IMPORTANCE_LOW
         )
         val manager = getSystemService(android.app.NotificationManager::class.java)
@@ -205,8 +211,9 @@ class TrackingService : Service() {
 
     private fun createNotification(content: String): Notification {
         val manager = getSystemService(android.app.NotificationManager::class.java)
+        val strings = LocalizationManager.strings
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("GeoSync Tracking")
+            .setContentTitle(strings.geoSyncTrackingTitle)
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)

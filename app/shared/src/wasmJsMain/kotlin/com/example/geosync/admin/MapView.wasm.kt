@@ -14,7 +14,9 @@ actual fun GoogleMapView(
     modifier: Modifier,
     locations: Map<String, StoredLocation>,
     selectedClientId: String?,
-    focusTrigger: Long
+    focusTrigger: Long,
+    defaultLatitude: Double?,
+    defaultLongitude: Double?
 ) {
     Box(modifier = modifier.background(Color.DarkGray)) {
         Text("Map not supported on Wasm yet", color = Color.White, modifier = Modifier.align(Alignment.Center))

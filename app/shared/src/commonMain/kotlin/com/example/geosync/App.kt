@@ -6,6 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -15,12 +16,30 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
+import com.example.geosync.localization.LocalStrings
+import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.admin.AdminScreen
 import com.example.geosync.client.ClientScreen
+import com.example.geosync.network.ConnectivityStatus
+import com.example.geosync.network.rememberConnectivityObserver
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppContent(selectedTab: Int, onTabSelected: (Int) -> Unit) {
     var isMapExpanded by remember { mutableStateOf(false) }
+    val strings = LocalStrings.current
+
+    val connectivityObserver = rememberConnectivityObserver()
+    LaunchedEffect(connectivityObserver) {
+        connectivityObserver.observe().collect { status ->
+            if (status == ConnectivityStatus.Offline) {
+                NotificationManager.showOffline()
+            } else {
+                NotificationManager.dismissOffline()
+            }
+        }
+    }
 
     Scaffold(
         bottomBar = {
@@ -50,14 +69,14 @@ fun AppContent(selectedTab: Int, onTabSelected: (Int) -> Unit) {
                                 selected = selectedTab == 0,
                                 onClick = { onTabSelected(0) },
                                 icon = Icons.Default.Settings,
-                                label = "Admin",
+                                label = strings.admin,
                                 modifier = Modifier.weight(1f)
                             )
                             TabItem(
                                 selected = selectedTab == 1,
                                 onClick = { onTabSelected(1) },
                                 icon = Icons.Default.Person,
-                                label = "Client",
+                                label = strings.client,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -123,12 +142,17 @@ private fun TabItem(
 @Composable
 @Preview
 fun App() {
-    MaterialTheme {
-        var selectedTab by remember { mutableStateOf(0) }
-        AppContent(
-            selectedTab = selectedTab,
-            onTabSelected = { selectedTab = it }
-        )
+    CompositionLocalProvider(
+        LocalStrings provides LocalizationManager.strings,
+        LocalLayoutDirection provides LocalizationManager.layoutDirection
+    ) {
+        MaterialTheme {
+            var selectedTab by remember { mutableStateOf(0) }
+            AppContent(
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it }
+            )
+        }
     }
 }
 

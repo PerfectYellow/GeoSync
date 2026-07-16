@@ -14,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.geosync.localization.LocalStrings
+import com.example.geosync.localization.LocalizationManager
 import kotlinx.coroutines.delay
 
 enum class NotificationType {
@@ -23,18 +25,38 @@ enum class NotificationType {
 data class NotificationData(
     val message: String,
     val type: NotificationType = NotificationType.INFO,
-    val durationMillis: Long = 3000
+    val durationMillis: Long = 3000,
+    val isPersistent: Boolean = false
 )
 
 object NotificationManager {
     private val _notification = mutableStateOf<NotificationData?>(null)
     val notification: State<NotificationData?> = _notification
 
+    private val OFFLINE_MSG get() = LocalizationManager.strings.youAreOffline
+
     fun show(message: String, type: NotificationType = NotificationType.INFO) {
         // Prevent spamming the same message (especially connection errors)
         if (_notification.value?.message == message) return
         
+        // Don't overwrite persistent (e.g., offline) notifications with transient ones
+        if (_notification.value?.isPersistent == true) return
+        
         _notification.value = NotificationData(message, type)
+    }
+
+    fun showOffline() {
+        _notification.value = NotificationData(
+            message = OFFLINE_MSG,
+            type = NotificationType.ERROR,
+            isPersistent = true
+        )
+    }
+
+    fun dismissOffline() {
+        if (_notification.value?.message == OFFLINE_MSG) {
+            dismiss()
+        }
     }
 
     fun dismiss() {
@@ -45,9 +67,10 @@ object NotificationManager {
 @Composable
 fun NotificationBanner() {
     val notificationData by NotificationManager.notification
+    val strings = LocalStrings.current
     
     LaunchedEffect(notificationData) {
-        if (notificationData != null) {
+        if (notificationData != null && !notificationData!!.isPersistent) {
             delay(notificationData!!.durationMillis)
             NotificationManager.dismiss()
         }
@@ -106,7 +129,7 @@ fun NotificationBanner() {
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Dismiss",
+                                contentDescription = strings.dismiss,
                                 modifier = Modifier.size(18.dp),
                                 tint = Color.White.copy(alpha = 0.7f)
                             )

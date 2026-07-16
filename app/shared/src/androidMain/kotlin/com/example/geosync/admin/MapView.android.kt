@@ -23,7 +23,9 @@ actual fun GoogleMapView(
     modifier: Modifier,
     locations: Map<String, StoredLocation>,
     selectedClientId: String?,
-    focusTrigger: Long
+    focusTrigger: Long,
+    defaultLatitude: Double?,
+    defaultLongitude: Double?
 ) {
     // OpenStreetMap needs a user agent to download tiles
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -44,6 +46,11 @@ actual fun GoogleMapView(
                 setTileSource(TileSourceFactory.MAPNIK)
                 setMultiTouchControls(true)
                 controller.setZoom(15.0)
+                
+                // Set initial center if default coordinates are provided
+                if (defaultLatitude != null && defaultLongitude != null) {
+                    controller.setCenter(GeoPoint(defaultLatitude, defaultLongitude))
+                }
             }
         },
         update = { mapView ->

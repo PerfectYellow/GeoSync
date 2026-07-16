@@ -10,7 +10,10 @@ expect fun rememberPermissionState(
 
 interface PermissionState {
     val hasPermission: Boolean
+    val shouldShowRationale: Boolean
+    val isPermanentlyDenied: Boolean
     fun launchPermissionRequest()
+    fun openSettings()
 }
 
 object PermissionNames {
