@@ -53,6 +53,8 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.osmdroid)
+            implementation(libs.osmdroid.mapsforge)
+            implementation(libs.mapsforge.android)
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)

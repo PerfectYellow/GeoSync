@@ -9,6 +9,10 @@ import io.ktor.client.plugins.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
+enum class MapMode {
+    OPEN_STREET, MAP_IR, INTERNAL, OFFLINE
+}
+
 class AdminViewModel : ViewModel() {
     private val client = geoHttpClient
 
@@ -20,6 +24,11 @@ class AdminViewModel : ViewModel() {
 
     private val _locations = MutableStateFlow<Map<String, StoredLocation>>(emptyMap())
     val locations: StateFlow<Map<String, StoredLocation>> = _locations.asStateFlow()
+
+    private val _mapMode = MutableStateFlow(MapMode.OPEN_STREET)
+    val mapMode: StateFlow<MapMode> = _mapMode.asStateFlow()
+
+    private var lastOnlineMode = MapMode.OPEN_STREET
 
     private var connectionJob: Job? = null
     private var session: DefaultClientWebSocketSession? = null
@@ -33,6 +42,30 @@ class AdminViewModel : ViewModel() {
 
     fun retryConnection() {
         connect()
+    }
+
+    fun setMapMode(mode: MapMode, isOffline: Boolean = false) {
+        val strings = LocalizationManager.strings
+        if (isOffline && mode != MapMode.OFFLINE) {
+            NotificationManager.show(strings.offlineMapChangeError, NotificationType.ERROR)
+            return
+        }
+        
+        _mapMode.value = mode
+        if (!isOffline && mode != MapMode.OFFLINE) {
+            lastOnlineMode = mode
+        }
+    }
+
+    fun handleNetworkChange(isOffline: Boolean) {
+        if (isOffline) {
+            _mapMode.value = MapMode.OFFLINE
+        } else {
+            // Return to previous online mode if it was swapped to OFFLINE due to connection loss
+            if (_mapMode.value == MapMode.OFFLINE) {
+                _mapMode.value = lastOnlineMode
+            }
+        }
     }
 
     private fun connect() {

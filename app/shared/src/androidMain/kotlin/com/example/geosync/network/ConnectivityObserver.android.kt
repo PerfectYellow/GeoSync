@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -25,23 +26,42 @@ class AndroidConnectivityObserver(
             val callback = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     super.onAvailable(network)
-                    launch { send(ConnectivityStatus.Online) }
+                    updateStatus()
                 }
 
                 override fun onLost(network: Network) {
                     super.onLost(network)
-                    launch { send(ConnectivityStatus.Offline) }
+                    updateStatus()
+                }
+
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                    super.onCapabilitiesChanged(network, capabilities)
+                    updateStatus()
+                }
+
+                private fun updateStatus() {
+                    val activeNetwork = connectivityManager.activeNetwork
+                    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+                    // NET_CAPABILITY_VALIDATED ensures that the system has successfully probed the internet.
+                    // NET_CAPABILITY_INTERNET just means the network is technically capable of internet (but might be behind a portal).
+                    val isOnline = capabilities != null && 
+                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    
+                    Log.d("Connectivity", "Network update: isOnline=$isOnline")
+                    launch { send(if (isOnline) ConnectivityStatus.Online else ConnectivityStatus.Offline) }
                 }
             }
 
             // Initial state
-            val isOnline = connectivityManager.activeNetwork?.let { network ->
-                connectivityManager.getNetworkCapabilities(network)
-                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } ?: false
+            val initialNetwork = connectivityManager.activeNetwork
+            val initialCaps = connectivityManager.getNetworkCapabilities(initialNetwork)
+            val initialOnline = initialCaps != null && 
+                    initialCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    initialCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             
             launch { 
-                send(if (isOnline) ConnectivityStatus.Online else ConnectivityStatus.Offline) 
+                send(if (initialOnline) ConnectivityStatus.Online else ConnectivityStatus.Offline) 
             }
 
             val request = NetworkRequest.Builder()

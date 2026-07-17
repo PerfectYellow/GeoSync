@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.geosync.network.androidContext
+import org.mapsforge.map.android.graphics.AndroidGraphicFactory
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -14,6 +15,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         
         androidContext = applicationContext
+        AndroidGraphicFactory.createInstance(application)
 
         setContent {
             App()

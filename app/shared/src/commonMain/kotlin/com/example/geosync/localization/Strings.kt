@@ -68,6 +68,11 @@ interface AppStrings {
     val dismiss: String
     val locationTrackingChannel: String
     val geoSyncTrackingTitle: String
+    val mapOpenStreet: String
+    val mapMapIr: String
+    val mapInternal: String
+    val mapOffline: String
+    val offlineMapChangeError: String
 }
 
 object EnStrings : AppStrings {
@@ -134,6 +139,11 @@ object EnStrings : AppStrings {
     override val dismiss = "Dismiss"
     override val locationTrackingChannel = "Location Tracking"
     override val geoSyncTrackingTitle = "GeoSync Tracking"
+    override val mapOpenStreet = "Open Street"
+    override val mapMapIr = "Map.ir"
+    override val mapInternal = "Internal"
+    override val mapOffline = "Offline"
+    override val offlineMapChangeError = "You are offline and can't change map"
 }
 
 object FaStrings : AppStrings {
@@ -200,6 +210,11 @@ object FaStrings : AppStrings {
     override val dismiss = "بستن"
     override val locationTrackingChannel = "ردیابی مکان"
     override val geoSyncTrackingTitle = "ردیابی GeoSync"
+    override val mapOpenStreet = "Open Street"
+    override val mapMapIr = "Map.ir"
+    override val mapInternal = "داخلی"
+    override val mapOffline = "آفلاین"
+    override val offlineMapChangeError = "شما آفلاین هستید و نمی‌توانید نقشه را تغییر دهید"
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {

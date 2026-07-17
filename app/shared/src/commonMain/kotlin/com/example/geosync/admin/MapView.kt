@@ -8,6 +8,7 @@ import com.example.geosync.network.StoredLocation
 expect fun GoogleMapView(
     modifier: Modifier,
     locations: Map<String, StoredLocation>,
+    mapMode: MapMode,
     selectedClientId: String? = null,
     focusTrigger: Long = 0L,
     defaultLatitude: Double? = null,

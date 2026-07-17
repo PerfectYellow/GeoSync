@@ -15,6 +15,7 @@ dependencies {
     implementation(projects.app.shared)
 
     implementation(libs.androidx.activity.compose)
+    implementation(libs.mapsforge.android)
 
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
@@ -30,6 +31,9 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "1.0"
+    }
+    androidResources {
+        noCompress += "map"
     }
     packaging {
         resources {

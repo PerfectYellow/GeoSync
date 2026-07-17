@@ -13,6 +13,7 @@ import com.example.geosync.network.StoredLocation
 actual fun GoogleMapView(
     modifier: Modifier,
     locations: Map<String, StoredLocation>,
+    mapMode: MapMode,
     selectedClientId: String?,
     focusTrigger: Long,
     defaultLatitude: Double?,

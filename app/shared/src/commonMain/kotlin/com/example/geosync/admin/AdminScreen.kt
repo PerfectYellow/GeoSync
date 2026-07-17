@@ -38,23 +38,28 @@ fun AdminScreen(
     val isConnected by viewModel.isConnected.collectAsState()
     val trackedClientIds by viewModel.trackedClientIds.collectAsState()
     val locations by viewModel.locations.collectAsState()
+    val mapMode by viewModel.mapMode.collectAsState()
 
     val connectivityObserver = rememberConnectivityObserver()
     val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
 
     LaunchedEffect(connectivityObserver) {
         connectivityObserver.observe().collect { status ->
-            if (status == ConnectivityStatus.Offline) {
+            val isOffline = status == ConnectivityStatus.Offline
+            if (isOffline) {
                 NotificationManager.showOffline()
             } else {
                 NotificationManager.dismissOffline()
             }
+            viewModel.handleNetworkChange(isOffline)
         }
     }
 
     AdminContent(
         isConnected = isConnected,
         networkStatus = networkStatus,
+        mapMode = mapMode,
+        onMapModeChange = { viewModel.setMapMode(it, networkStatus == ConnectivityStatus.Offline) },
         trackedClientIds = trackedClientIds,
         locations = locations,
         paddingValues = paddingValues,
@@ -69,6 +74,8 @@ fun AdminScreen(
 fun AdminContent(
     isConnected: Boolean,
     networkStatus: ConnectivityStatus,
+    mapMode: MapMode,
+    onMapModeChange: (MapMode) -> Unit,
     trackedClientIds: Set<String>,
     locations: Map<String, StoredLocation>,
     paddingValues: PaddingValues = PaddingValues(0.dp),
@@ -111,6 +118,11 @@ fun AdminContent(
                             fontWeight = FontWeight.Black,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
+                        )
+                        MapModeSelector(
+                            currentMode = mapMode,
+                            isOffline = networkStatus == ConnectivityStatus.Offline,
+                            onModeSelected = onMapModeChange
                         )
                         LanguageSelector()
                     }
@@ -240,6 +252,7 @@ fun AdminContent(
                 onMapToggle(isMapExpanded)
             },
             locations = locations,
+            mapMode = mapMode,
             selectedClientId = selectedClientId,
             focusTrigger = focusTrigger,
             modifier = Modifier
@@ -424,6 +437,7 @@ fun MapPreview(
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
     locations: Map<String, StoredLocation>,
+    mapMode: MapMode,
     selectedClientId: String? = null,
     focusTrigger: Long = 0L,
     modifier: Modifier = Modifier
@@ -441,10 +455,11 @@ fun MapPreview(
                 GoogleMapView(
                     modifier = Modifier.fillMaxSize(),
                     locations = locations,
+                    mapMode = mapMode,
                     selectedClientId = selectedClientId,
                     focusTrigger = focusTrigger,
-                    defaultLatitude = 35.744722,
-                    defaultLongitude = 51.375278
+                    defaultLatitude = 35.699444,
+                    defaultLongitude = 51.337778
                 )
             } else {
                 Box(
@@ -482,6 +497,8 @@ fun AdminScreenPreview() {
             AdminContent(
                 isConnected = true,
                 networkStatus = ConnectivityStatus.Online,
+                mapMode = MapMode.OPEN_STREET,
+                onMapModeChange = {},
                 trackedClientIds = setOf("Client-1", "Client-2"),
                 locations = mapOf(
                     "Client-1" to StoredLocation("Client-1", 37.7749, -122.4194, isOnline = true),
