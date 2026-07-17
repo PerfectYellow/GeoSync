@@ -55,6 +55,8 @@ kotlin {
             implementation(libs.osmdroid)
             implementation(libs.osmdroid.mapsforge)
             implementation(libs.mapsforge.android)
+            api(libs.maplibre.android)
+            api(libs.okhttp)
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
