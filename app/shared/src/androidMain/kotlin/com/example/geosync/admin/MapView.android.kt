@@ -21,6 +21,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -48,6 +50,47 @@ import org.maplibre.android.annotations.MarkerOptions
 import java.io.File
 import java.io.FileOutputStream
 
+/**
+ * Single source of truth for Offline Map configuration.
+ * Change [FILE_BASE_NAME] or [PREFERRED_FORMAT] here to update the entire app's offline behavior.
+ */
+object OfflineMapConfig {
+    const val FILE_BASE_NAME = "Tehran"
+    const val ASSET_FOLDER = "map"
+    const val STYLE_JSON_NAME = "style.json"
+
+    val PREFERRED_FORMAT = MapFormat.MAPFORGE
+
+    /**
+     * Scale factor for Mapsforge (.map). 
+     * Lower values (e.g., 0.3f - 0.5f) make text and lines smaller.
+     */
+    const val MAPFORGE_SCALE_MODIFIER = 0.3f
+    
+    /**
+     * Scale factor for client markers.
+     * Lower values make the bubble markers smaller.
+     */
+    const val MARKER_SCALE_MODIFIER = 0.001f
+
+    /**
+     * Theme for Mapsforge. OSMARENDER is detailed, DEFAULT is basic.
+     */
+    val MAPFORGE_THEME = InternalRenderTheme.OSMARENDER
+
+    enum class MapFormat {
+        PMTILES, MAPFORGE
+    }
+
+    // Derived paths
+    val pmtilesFileName get() = "$FILE_BASE_NAME.pmtiles"
+    val mapforgeFileName get() = "$FILE_BASE_NAME.map"
+    
+    val pmtilesAssetPath get() = "$ASSET_FOLDER/$pmtilesFileName"
+    val mapforgeAssetPath get() = "$ASSET_FOLDER/$mapforgeFileName"
+    val styleAssetPath get() = "$ASSET_FOLDER/$STYLE_JSON_NAME"
+}
+
 
 @Composable
 actual fun GoogleMapView(
@@ -63,9 +106,37 @@ actual fun GoogleMapView(
 ) {
     // Trigger for programmatic zoom/position changes
     var externalMoveTrigger by remember { mutableStateOf(0L) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    
+    // Determine which engine to use for offline mode based on config and file availability
+    val useMapLibreForOffline = remember(context, mapMode) { 
+        if (mapMode != MapMode.OFFLINE) return@remember false
+        
+        val pmtilesInCache = File(context.cacheDir, OfflineMapConfig.pmtilesFileName).exists()
+        val pmtilesInAssets = try { 
+            context.assets.list(OfflineMapConfig.ASSET_FOLDER)?.contains(OfflineMapConfig.pmtilesFileName) == true 
+        } catch(e: Exception) { false }
+        
+        val pmtilesAvailable = pmtilesInCache || pmtilesInAssets
+        
+        // If PMTILES is preferred and available, use MapLibre
+        if (OfflineMapConfig.PREFERRED_FORMAT == OfflineMapConfig.MapFormat.PMTILES && pmtilesAvailable) {
+            true
+        } else if (OfflineMapConfig.PREFERRED_FORMAT == OfflineMapConfig.MapFormat.MAPFORGE) {
+            // If MAPFORGE is preferred, we only use MapLibre if .map is missing but .pmtiles is there
+            val mapInCache = File(context.cacheDir, OfflineMapConfig.mapforgeFileName).exists()
+            val mapInAssets = try { 
+                context.assets.list(OfflineMapConfig.ASSET_FOLDER)?.contains(OfflineMapConfig.mapforgeFileName) == true 
+            } catch(e: Exception) { false }
+            
+            !mapInCache && !mapInAssets && pmtilesAvailable
+        } else {
+            pmtilesAvailable
+        }
+    }
 
     Box(modifier = modifier) {
-        if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL) {
+        if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL || useMapLibreForOffline) {
             MapLibreMapView(
                 modifier = Modifier,
                 locations = locations,
@@ -163,11 +234,55 @@ private fun MapLibreMapView(
     val context = androidx.compose.ui.platform.LocalContext.current
     val labelBgColor = MaterialTheme.colorScheme.primary.toArgb()
     
-    val styleUrl = if (mapMode == MapMode.INTERNAL) {
-        val protocol = if (ApiConfig.isSecure) "https" else "http"
-        "$protocol://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/map/style.json"
-    } else {
-        "https://map.ir/vector/styles/main/mapir-xyz-style.json"
+    // Ensure offline assets are copied
+    var assetsReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val styleFile = File(context.cacheDir, OfflineMapConfig.STYLE_JSON_NAME)
+            val pmtilesFile = File(context.cacheDir, OfflineMapConfig.pmtilesFileName)
+            
+            if (!pmtilesFile.exists()) {
+                try {
+                    context.assets.open(OfflineMapConfig.pmtilesAssetPath).use { input ->
+                        FileOutputStream(pmtilesFile).use { output -> input.copyTo(output) }
+                    }
+                } catch (e: Exception) {
+                    Log.e("MapView", "Failed to copy PMTiles", e)
+                }
+            }
+
+            if (!styleFile.exists()) {
+                try {
+                    context.assets.open(OfflineMapConfig.styleAssetPath).use { input ->
+                        val content = input.bufferedReader().use { it.readText() }
+                        val fixedContent = content.replace("{PMTILES_PATH}", pmtilesFile.absolutePath)
+                        FileOutputStream(styleFile).use { output -> 
+                            output.writer().use { it.write(fixedContent) }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("MapView", "Failed to copy style.json", e)
+                }
+            }
+            assetsReady = true
+        }
+    }
+
+    val styleUrl = when {
+        mapMode == MapMode.INTERNAL -> {
+            val protocol = if (ApiConfig.isSecure) "https" else "http"
+            "$protocol://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/map/style.json"
+        }
+        mapMode == MapMode.OFFLINE -> {
+            val styleFile = File(context.cacheDir, OfflineMapConfig.STYLE_JSON_NAME)
+            if (assetsReady && styleFile.exists()) {
+                "file://${styleFile.absolutePath}"
+            } else {
+                // Fallback while copying or if failed
+                "https://map.ir/vector/styles/main/mapir-xyz-style.json"
+            }
+        }
+        else -> "https://map.ir/vector/styles/main/mapir-xyz-style.json"
     }
 
     val mapView = remember {
@@ -280,10 +395,10 @@ private fun OsmdroidMapView(
     }
 
     val mapFile: File? = remember(context) {
-        val file = File(context.cacheDir, "Tehran.map")
+        val file = File(context.cacheDir, OfflineMapConfig.mapforgeFileName)
         if (!file.exists()) {
             try {
-                context.assets.open("map/Tehran.map").use { input ->
+                context.assets.open(OfflineMapConfig.mapforgeAssetPath).use { input ->
                     FileOutputStream(file).use { output -> input.copyTo(output) }
                 }
                 file
@@ -354,8 +469,14 @@ private fun OsmdroidMapView(
                         when (mapMode) {
                             MapMode.OFFLINE -> {
                                 if (mapFile != null && mapFile.exists()) {
-                                    val forgeSource = MapsForgeTileSource.createFromFiles(arrayOf(mapFile), InternalRenderTheme.DEFAULT, "Offline")
-                                    forgeSource.setUserScaleFactor(context.resources.displayMetrics.density)
+                                    val forgeSource = MapsForgeTileSource.createFromFiles(
+                                        arrayOf(mapFile), 
+                                        OfflineMapConfig.MAPFORGE_THEME, 
+                                        "Offline"
+                                    )
+                                    val density = context.resources.displayMetrics.density
+                                    // Using a smaller modifier to reduce the "huge" text effect
+                                    forgeSource.setUserScaleFactor(density * OfflineMapConfig.MAPFORGE_SCALE_MODIFIER)
                                     mapView.setTileProvider(MapsForgeTileProvider(org.osmdroid.tileprovider.util.SimpleRegisterReceiver(context), forgeSource, null))
                                     mapView.setTileSource(forgeSource)
                                     mapView.setUseDataConnection(false)
@@ -391,7 +512,7 @@ private fun OsmdroidMapView(
                     val marker = Marker(mapView).apply {
                         position = point
                         icon = createTextDrawable(context, shortId, labelBgColor)
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM) // Tail points to coordinate
                         title = shortId
                     }
                     mapView.overlays.add(marker)
@@ -412,30 +533,39 @@ private fun OsmdroidMapView(
 }
 
 private fun createTextBitmap(context: android.content.Context, text: String, bgColor: Int): Bitmap {
+    val density = context.resources.displayMetrics.density
+    val scale = density * OfflineMapConfig.MARKER_SCALE_MODIFIER
+    
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
-        textSize = 34f
+        textSize = 12f * scale
         textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bgColor }
     val bounds = Rect()
     paint.getTextBounds(text, 0, text.length, bounds)
-    val paddingH = 24f
-    val paddingV = 16f
-    val tailSize = 15f
+    
+    val paddingH = 8f * scale
+    val paddingV = 6f * scale
+    val tailSize = 6f * scale
+    val cornerRadius = 6f * scale
+    
     val width = bounds.width() + paddingH * 2
     val height = bounds.height() + paddingV * 2 + tailSize
     val bitmap = Bitmap.createBitmap(width.toInt(), height.toInt(), Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
+    
     val rectF = RectF(0f, 0f, width, height - tailSize)
-    canvas.drawRoundRect(rectF, 12f, 12f, backgroundPaint)
+    canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, backgroundPaint)
+    
     val path = android.graphics.Path()
     path.moveTo(width / 2f - tailSize, height - tailSize)
     path.lineTo(width / 2f + tailSize, height - tailSize)
     path.lineTo(width / 2f, height)
     path.close()
     canvas.drawPath(path, backgroundPaint)
+    
     canvas.drawText(text, width / 2f, (height - tailSize) / 2f - bounds.centerY(), paint)
     return bitmap
 }

@@ -14,7 +14,7 @@ object ApiConfig {
     /**
      * Switch this to [Environment.DEVELOPMENT] for local testing.
      */
-    private val currentEnvironment = Environment.DEVELOPMENT
+    private val currentEnvironment = Environment.PRODUCTION
 
     val HOST: String = when (currentEnvironment) {
         Environment.PRODUCTION -> "geosync.invisiblesociety.space"

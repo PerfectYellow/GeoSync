@@ -70,6 +70,11 @@ class AdminViewModel : ViewModel() {
         }
         
         _mapMode.value = mode
+        if (mode == MapMode.OFFLINE) {
+            // Force re-center to Tehran when switching to offline
+            _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
+        }
+        
         if (!isOffline && mode != MapMode.OFFLINE) {
             lastOnlineMode = mode
         }
