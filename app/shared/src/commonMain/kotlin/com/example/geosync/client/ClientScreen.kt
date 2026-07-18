@@ -1,6 +1,7 @@
 package com.example.geosync.client
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.tooling.preview.Preview
@@ -42,6 +44,7 @@ fun ClientScreen(
     val trackingId by viewModel.trackingId.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
+    val subscribersCount by viewModel.subscribersCount.collectAsState()
 
     val connectivityObserver = rememberConnectivityObserver()
     val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
@@ -66,6 +69,7 @@ fun ClientScreen(
             trackingId = trackingId,
             connectionStatus = connectionStatus,
             connectionError = connectionError,
+            subscribersCount = subscribersCount,
             onToggleTracking = {
                 if (networkStatus == ConnectivityStatus.Offline) {
                     NotificationManager.showOffline()
@@ -155,6 +159,7 @@ fun ClientScreenContent(
     trackingId: String,
     connectionStatus: ConnectionStatus,
     connectionError: String?,
+    subscribersCount: Int = 0,
     onToggleTracking: () -> Unit,
     paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
@@ -197,12 +202,24 @@ fun ClientScreenContent(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .clipToBounds(),
             contentAlignment = Alignment.Center
         ) {
             AnimatedContent(
                 targetState = isConnected,
-                label = "TrackingState"
+                label = "TrackingState",
+                transitionSpec = {
+                    if (targetState) {
+                        (slideInVertically { height -> height / 4 } + fadeIn(animationSpec = tween(400)))
+                            .togetherWith(slideOutVertically { height -> -height / 4 } + fadeOut(animationSpec = tween(400)))
+                    } else {
+                        (slideInVertically { height -> -height / 4 } + fadeIn(animationSpec = tween(400)))
+                            .togetherWith(slideOutVertically { height -> height / 4 } + fadeOut(animationSpec = tween(400)))
+                    }.using(
+                        SizeTransform(clip = false)
+                    )
+                }
             ) { connected ->
                 if (!connected) {
                     IdleView(
@@ -213,6 +230,7 @@ fun ClientScreenContent(
                     TrackingView(
                         trackingId = trackingId,
                         connectionStatus = connectionStatus,
+                        subscribersCount = subscribersCount,
                         onStop = onToggleTracking,
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(trackingId))
@@ -312,6 +330,7 @@ private fun IdleView(onStart: () -> Unit, isLoading: Boolean) {
 private fun TrackingView(
     trackingId: String, 
     connectionStatus: ConnectionStatus,
+    subscribersCount: Int,
     onStop: () -> Unit, 
     onCopy: () -> Unit
 ) {
@@ -345,6 +364,32 @@ private fun TrackingView(
             fontWeight = FontWeight.Bold,
             color = Color(0xFF2E7D32)
         )
+        
+        if (subscribersCount > 0) {
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Visibility,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = strings.adminSubscribed(subscribersCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
         
         Spacer(modifier = Modifier.height(32.dp))
         
@@ -418,6 +463,7 @@ fun ClientScreenPreview() {
                 trackingId = "123e4567-e89b-12d3-a456-426614174000",
                 connectionStatus = ConnectionStatus.IDLE,
                 connectionError = null,
+                subscribersCount = 0,
                 onToggleTracking = {}
             )
         }
@@ -433,6 +479,7 @@ fun ClientScreenTrackingPreview() {
                 trackingId = "123e4567-e89b-12d3-a456-426614174000",
                 connectionStatus = ConnectionStatus.CONNECTED,
                 connectionError = null,
+                subscribersCount = 1,
                 onToggleTracking = {}
             )
         }
@@ -448,6 +495,7 @@ fun ClientScreenErrorPreview() {
                 trackingId = "",
                 connectionStatus = ConnectionStatus.FAILED,
                 connectionError = "Connection refused: Server is unreachable",
+                subscribersCount = 0,
                 onToggleTracking = {}
             )
         }

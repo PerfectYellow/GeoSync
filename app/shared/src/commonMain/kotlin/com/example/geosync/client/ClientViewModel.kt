@@ -17,6 +17,7 @@ class ClientViewModel : ViewModel() {
 
     val connectionStatus = TrackingStatus.status
     val connectionError = TrackingStatus.errorMessage
+    val subscribersCount = TrackingStatus.subscribersCount
 
     private val _trackingId = MutableStateFlow("")
     val trackingId: StateFlow<String> = _trackingId.asStateFlow()

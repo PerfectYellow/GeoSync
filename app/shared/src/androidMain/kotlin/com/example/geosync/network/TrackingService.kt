@@ -163,6 +163,22 @@ class TrackingService : Service() {
                     GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
                     sendSerialized(LiveLocationMessage(type = "client.register", clientId = id))
                     
+                    // Listen for incoming messages (like subscriber updates)
+                    launch {
+                        try {
+                            while (isActive) {
+                                val event = receiveDeserialized<ServerEvent>()
+                                if (event.type == "client.subscribers") {
+                                    event.subscribersCount?.let { count ->
+                                        TrackingStatus.updateSubscribers(count)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // WebSocket closed or error
+                        }
+                    }
+
                     while (isActive) {
                         val location = lastLocation
                         if (location != null) {
@@ -186,6 +202,7 @@ class TrackingService : Service() {
                 TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
                 GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
             } finally {
+                TrackingStatus.updateSubscribers(0)
                 if (TrackingStatus.status.value == ConnectionStatus.CONNECTED) {
                     TrackingStatus.updateStatus(ConnectionStatus.IDLE)
                 }

@@ -19,7 +19,8 @@ data class ServerEvent(
     val clientId: String? = null,
     val clientIds: List<String>? = null,
     val location: StoredLocation? = null,
-    val message: String? = null
+    val message: String? = null,
+    val subscribersCount: Int? = null
 )
 
 @Serializable

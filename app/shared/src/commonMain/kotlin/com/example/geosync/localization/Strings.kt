@@ -73,6 +73,7 @@ interface AppStrings {
     val mapInternal: String
     val mapOffline: String
     val offlineMapChangeError: String
+    val adminSubscribed: (Int) -> String
 }
 
 object EnStrings : AppStrings {
@@ -144,6 +145,7 @@ object EnStrings : AppStrings {
     override val mapInternal = "Internal"
     override val mapOffline = "Offline"
     override val offlineMapChangeError = "You are offline and can't change map"
+    override val adminSubscribed: (Int) -> String = { count -> if (count == 1) "1 admin is watching" else "$count admins are watching" }
 }
 
 object FaStrings : AppStrings {
@@ -215,6 +217,7 @@ object FaStrings : AppStrings {
     override val mapInternal = "داخلی"
     override val mapOffline = "آفلاین"
     override val offlineMapChangeError = "شما آفلاین هستید و نمی‌توانید نقشه را تغییر دهید"
+    override val adminSubscribed: (Int) -> String = { count -> if (count == 1) "۱ مدیر در حال مشاهده است" else "$count مدیر در حال مشاهده هستند" }
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {
