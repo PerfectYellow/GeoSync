@@ -9,12 +9,25 @@ import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.util.Log
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.geosync.network.StoredLocation
+import com.example.geosync.network.ApiConfig
 import org.mapsforge.map.rendertheme.InternalRenderTheme
 import org.osmdroid.mapsforge.MapsForgeTileProvider
 import org.osmdroid.mapsforge.MapsForgeTileSource
@@ -55,14 +68,19 @@ actual fun GoogleMapView(
     var cameraState by remember { 
         mutableStateOf(MapCameraState(defaultLatitude ?: 35.6994, defaultLongitude ?: 51.3377, 14.0)) 
     }
+    
+    // Trigger for programmatic zoom/position changes
+    var externalMoveTrigger by remember { mutableStateOf(0L) }
 
     Box(modifier = modifier) {
-        if (mapMode == MapMode.MAP_IR) {
+        if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL) {
             MapLibreMapView(
                 modifier = Modifier,
                 locations = locations,
+                mapMode = mapMode,
                 selectedClientId = selectedClientId,
                 focusTrigger = focusTrigger,
+                externalMoveTrigger = externalMoveTrigger,
                 cameraState = cameraState,
                 onCameraChanged = { cameraState = it }
             )
@@ -73,11 +91,68 @@ actual fun GoogleMapView(
                 mapMode = mapMode,
                 selectedClientId = selectedClientId,
                 focusTrigger = focusTrigger,
+                externalMoveTrigger = externalMoveTrigger,
                 defaultLatitude = defaultLatitude,
                 defaultLongitude = defaultLongitude,
                 cameraState = cameraState,
                 onCameraChanged = { cameraState = it }
             )
+        }
+
+        // Zoom Controls
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 16.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+        ) {
+            FilledIconButton(
+                onClick = {
+                    cameraState = cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(20.0))
+                    externalMoveTrigger++
+                },
+                modifier = Modifier.size(44.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Zoom In")
+            }
+
+            FilledIconButton(
+                onClick = {
+                    cameraState = cameraState.copy(zoom = (cameraState.zoom - 1).coerceAtLeast(1.0))
+                    externalMoveTrigger++
+                },
+                modifier = Modifier.size(44.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(Icons.Default.Remove, contentDescription = "Zoom Out")
+            }
+
+            if (locations.isNotEmpty()) {
+                FilledIconButton(
+                    onClick = {
+                        val lats = locations.values.map { it.latitude }
+                        val lngs = locations.values.map { it.longitude }
+                        val avgLat = lats.average()
+                        val avgLng = lngs.average()
+                        cameraState = cameraState.copy(latitude = avgLat, longitude = avgLng)
+                        externalMoveTrigger++
+                    },
+                    modifier = Modifier.size(44.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                        contentColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    Icon(Icons.Default.MyLocation, contentDescription = "Fit to Clients")
+                }
+            }
         }
     }
 }
@@ -86,23 +161,26 @@ actual fun GoogleMapView(
 private fun MapLibreMapView(
     modifier: Modifier,
     locations: Map<String, StoredLocation>,
+    mapMode: MapMode,
     selectedClientId: String?,
     focusTrigger: Long,
+    externalMoveTrigger: Long,
     cameraState: MapCameraState,
     onCameraChanged: (MapCameraState) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val labelBgColor = MaterialTheme.colorScheme.primary.toArgb()
     
+    val styleUrl = if (mapMode == MapMode.INTERNAL) {
+        val protocol = if (ApiConfig.isSecure) "https" else "http"
+        "$protocol://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/map/style.json"
+    } else {
+        "https://map.ir/vector/styles/main/mapir-xyz-style.json"
+    }
+
     val mapView = remember {
         org.maplibre.android.maps.MapView(context).apply {
             getMapAsync { map ->
-                map.setStyle("https://map.ir/vector/styles/main/mapir-xyz-style.json") {
-                    map.moveCamera(CameraUpdateFactory.newLatLngZoom(
-                        LatLng(cameraState.latitude, cameraState.longitude), 
-                        cameraState.zoom
-                    ))
-                }
                 map.uiSettings.isAttributionEnabled = false
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isCompassEnabled = true
@@ -130,13 +208,35 @@ private fun MapLibreMapView(
     }
 
     var lastFocusTrigger by remember { mutableStateOf(0L) }
+    var lastExternalMoveTrigger by remember { mutableStateOf(0L) }
     var centeredClientIds by remember { mutableStateOf(setOf<String>()) }
+    var currentStyleUrl by remember { mutableStateOf("") }
 
     AndroidView(
         factory = { mapView },
         modifier = modifier,
         update = { view ->
             view.getMapAsync { map ->
+                // Apply style if changed
+                if (currentStyleUrl != styleUrl) {
+                    map.setStyle(styleUrl) {
+                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(
+                            LatLng(cameraState.latitude, cameraState.longitude),
+                            cameraState.zoom
+                        ))
+                    }
+                    currentStyleUrl = styleUrl
+                }
+
+                // Apply external move (buttons)
+                if (externalMoveTrigger != lastExternalMoveTrigger) {
+                    map.animateCamera(CameraUpdateFactory.newLatLngZoom(
+                        LatLng(cameraState.latitude, cameraState.longitude),
+                        cameraState.zoom
+                    ))
+                    lastExternalMoveTrigger = externalMoveTrigger
+                }
+
                 map.clear()
                 locations.forEach { (id, location) ->
                     val pos = LatLng(location.latitude, location.longitude)
@@ -171,6 +271,7 @@ private fun OsmdroidMapView(
     mapMode: MapMode,
     selectedClientId: String?,
     focusTrigger: Long,
+    externalMoveTrigger: Long,
     defaultLatitude: Double?,
     defaultLongitude: Double?,
     cameraState: MapCameraState,
@@ -201,6 +302,7 @@ private fun OsmdroidMapView(
     var currentMapMode by remember { mutableStateOf<MapMode?>(null) }
     var centeredClientIds by remember { mutableStateOf(setOf<String>()) }
     var lastFocusTrigger by remember { mutableStateOf(0L) }
+    var lastExternalMoveTrigger by remember { mutableStateOf(0L) }
 
     if (isInitialized.value) {
         AndroidView(
@@ -209,7 +311,7 @@ private fun OsmdroidMapView(
                 MapView(ctx).apply {
                     setMultiTouchControls(true)
                     setUseDataConnection(true)
-                    setBuiltInZoomControls(true)
+                    setBuiltInZoomControls(false) // Using custom buttons
                     
                     overlays.add(RotationGestureOverlay(this))
                     val compassOverlay = CompassOverlay(ctx, InternalCompassOrientationProvider(ctx), this)
@@ -243,6 +345,16 @@ private fun OsmdroidMapView(
                 }
             },
             update = { mapView ->
+                // Apply external move (buttons)
+                if (externalMoveTrigger != lastExternalMoveTrigger) {
+                    mapView.controller.animateTo(
+                        GeoPoint(cameraState.latitude, cameraState.longitude),
+                        cameraState.zoom,
+                        1000L
+                    )
+                    lastExternalMoveTrigger = externalMoveTrigger
+                }
+
                 if (currentMapMode != mapMode) {
                     try { mapView.tileProvider?.detach() } catch (e: Exception) {}
 
