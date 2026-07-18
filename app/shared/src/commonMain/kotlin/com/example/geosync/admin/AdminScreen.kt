@@ -1,12 +1,12 @@
 package com.example.geosync.admin
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,8 +15,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -39,6 +40,10 @@ fun AdminScreen(
     val trackedClientIds by viewModel.trackedClientIds.collectAsState()
     val locations by viewModel.locations.collectAsState()
     val mapMode by viewModel.mapMode.collectAsState()
+    val clientIdInput by viewModel.clientIdInput.collectAsState()
+    val isListExpanded by viewModel.isListExpanded.collectAsState()
+    val isMapExpanded by viewModel.isMapExpanded.collectAsState()
+    val cameraState by viewModel.cameraState.collectAsState()
 
     val connectivityObserver = rememberConnectivityObserver()
     val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
@@ -55,19 +60,31 @@ fun AdminScreen(
         }
     }
 
-    AdminContent(
-        isConnected = isConnected,
-        networkStatus = networkStatus,
-        mapMode = mapMode,
-        onMapModeChange = { viewModel.setMapMode(it, networkStatus == ConnectivityStatus.Offline) },
-        trackedClientIds = trackedClientIds,
-        locations = locations,
-        paddingValues = paddingValues,
-        onRetryConnection = { viewModel.retryConnection() },
-        onAddClient = { viewModel.addClient(it) },
-        onRemoveClient = { viewModel.removeClient(it) },
-        onMapToggle = onMapToggle
-    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        AdminContent(
+            isConnected = isConnected,
+            networkStatus = networkStatus,
+            mapMode = mapMode,
+            onMapModeChange = { viewModel.setMapMode(it, networkStatus == ConnectivityStatus.Offline) },
+            trackedClientIds = trackedClientIds,
+            locations = locations,
+            clientIdInput = clientIdInput,
+            onClientIdInputChange = { viewModel.setClientIdInput(it) },
+            isListExpanded = isListExpanded,
+            onListExpandedChange = { viewModel.setListExpanded(it) },
+            isMapExpanded = isMapExpanded,
+            onMapExpandedChange = { viewModel.setMapExpanded(it) },
+            cameraState = cameraState,
+            onCameraChanged = { viewModel.updateCameraState(it) },
+            onRetryConnection = { viewModel.retryConnection() },
+            onAddClient = { viewModel.addClient(it) },
+            onRemoveClient = { viewModel.removeClient(it) },
+            onMapToggle = { 
+                viewModel.setMapExpanded(it)
+                onMapToggle(it) 
+            }
+        )
+    }
 }
 
 @Composable
@@ -78,15 +95,19 @@ fun AdminContent(
     onMapModeChange: (MapMode) -> Unit,
     trackedClientIds: Set<String>,
     locations: Map<String, StoredLocation>,
-    paddingValues: PaddingValues = PaddingValues(0.dp),
+    clientIdInput: String,
+    onClientIdInputChange: (String) -> Unit,
+    isListExpanded: Boolean,
+    onListExpandedChange: (Boolean) -> Unit,
+    isMapExpanded: Boolean,
+    onMapExpandedChange: (Boolean) -> Unit,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit,
     onRetryConnection: () -> Unit = {},
     onAddClient: (String) -> Unit = {},
     onRemoveClient: (String) -> Unit = {},
     onMapToggle: (Boolean) -> Unit = {}
 ) {
-    var clientIdInput by remember { mutableStateOf("") }
-    var isMapExpanded by remember { mutableStateOf(false) }
-    var isListExpanded by remember { mutableStateOf(false) }
     var selectedClientId by remember { mutableStateOf<String?>(null) }
     var focusTrigger by remember { mutableStateOf(0L) }
     val strings = LocalStrings.current
@@ -95,128 +116,178 @@ fun AdminContent(
         clientIdInput.isEmpty() || clientIdInput.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex())
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(top = paddingValues.calculateTopPadding()),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // 1. Map in the background
+        MapPreview(
+            locations = locations,
+            mapMode = mapMode,
+            selectedClientId = selectedClientId,
+            focusTrigger = focusTrigger,
+            cameraState = cameraState,
+            onCameraChanged = onCameraChanged,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // 2. Controls in the foreground
         if (!isMapExpanded) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp)
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = strings.adminPortal,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Black,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        MapModeSelector(
-                            currentMode = mapMode,
-                            isOffline = networkStatus == ConnectivityStatus.Offline,
-                            onModeSelected = onMapModeChange
-                        )
-                        LanguageSelector()
-                    }
-                    ConnectionStatus(isConnected, networkStatus, onRetryConnection)
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = clientIdInput,
-                    onValueChange = { clientIdInput = it },
-                    label = { Text(strings.clientIdToTrack) },
+                // Main Header Card - STABLE SHADOW
+                Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text(strings.enterClientId) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = {
-                                if (clientIdInput.isNotEmpty()) {
-                                    onAddClient(clientIdInput)
-                                    if (isInputValid) clientIdInput = ""
-                                }
-                            },
-                            enabled = clientIdInput.isNotEmpty()
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                    shadowElevation = 8.dp,
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = strings.addClient)
-                        }
-                    },
-                    isError = !isInputValid,
-                    singleLine = true,
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onDone = {
-                            if (clientIdInput.isNotEmpty()) {
-                                onAddClient(clientIdInput)
-                                if (isInputValid) clientIdInput = ""
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = strings.adminPortal,
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Black,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                ConnectionStatus(isConnected, networkStatus, onRetryConnection)
+                            }
+
+                            MapModeSelector(
+                                currentMode = mapMode,
+                                isOffline = networkStatus == ConnectivityStatus.Offline,
+                                onModeSelected = onMapModeChange
+                            )
+                            LanguageSelector()
+                            
+                            IconButton(
+                                onClick = { 
+                                    onMapExpandedChange(true)
+                                    onMapToggle(true)
+                                },
+                                modifier = Modifier
+                                    .padding(start = 8.dp)
+                                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
+                                    .size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fullscreen,
+                                    contentDescription = strings.expandMap,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
-                    ),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
-                    ),
-                    shape = MaterialTheme.shapes.medium
-                )
 
-                AnimatedVisibility(visible = !isInputValid) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp, start = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.error
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        OutlinedTextField(
+                            value = clientIdInput,
+                            onValueChange = onClientIdInputChange,
+                            label = { Text(strings.clientIdToTrack) },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text(strings.enterClientId) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = {
+                                        if (clientIdInput.isNotEmpty()) {
+                                            onAddClient(clientIdInput)
+                                            if (isInputValid) onClientIdInputChange("")
+                                        }
+                                    },
+                                    enabled = clientIdInput.isNotEmpty()
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = strings.addClient)
+                                }
+                            },
+                            isError = !isInputValid,
+                            singleLine = true,
+                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                onDone = {
+                                    if (clientIdInput.isNotEmpty()) {
+                                        onAddClient(clientIdInput)
+                                        if (isInputValid) onClientIdInputChange("")
+                                    }
+                                }
+                            ),
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                            ),
+                            shape = MaterialTheme.shapes.medium
                         )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = strings.invalidUuidFormat,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+
+                        AnimatedVisibility(visible = !isInputValid) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp, start = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = strings.invalidUuidFormat,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Tracked Clients List Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onListExpandedChange(!isListExpanded) }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = strings.trackedClients(trackedClientIds.size),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                if (isListExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null
+                            )
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Tracked Clients List Header
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isListExpanded = !isListExpanded }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Separated List - Smoothly expands without moving the main card's shadow
+                AnimatedVisibility(
+                    visible = isListExpanded,
+                    modifier = Modifier.padding(top = 8.dp)
                 ) {
-                    Text(
-                        text = strings.trackedClients(trackedClientIds.size),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        if (isListExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = null
-                    )
-                }
-
-                AnimatedVisibility(visible = isListExpanded) {
-                    Card(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 200.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .heightIn(max = 240.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f), // More opaque
+                        shadowElevation = 4.dp,
+                        shape = RoundedCornerShape(24.dp)
                     ) {
                         if (trackedClientIds.isEmpty()) {
                             Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -243,32 +314,27 @@ fun AdminContent(
                     }
                 }
             }
-        }
-
-        MapPreview(
-            isExpanded = isMapExpanded,
-            onToggleExpand = { 
-                isMapExpanded = !isMapExpanded
-                onMapToggle(isMapExpanded)
-            },
-            locations = locations,
-            mapMode = mapMode,
-            selectedClientId = selectedClientId,
-            focusTrigger = focusTrigger,
-            modifier = Modifier
-                .weight(1f)
-                .then(
-                    if (!isMapExpanded) {
-                        Modifier.padding(
-                            start = 16.dp,
-                            end = 16.dp,
-                            bottom = paddingValues.calculateBottomPadding() + 16.dp
-                        )
-                    } else {
-                        Modifier
-                    }
+        } else {
+            // Restore UI Button (Floating)
+            IconButton(
+                onClick = { 
+                    onMapExpandedChange(false)
+                    onMapToggle(false)
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+                    .shadow(elevation = 6.dp, shape = CircleShape)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), CircleShape)
+                    .size(48.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = strings.collapseMap,
+                    tint = MaterialTheme.colorScheme.primary
                 )
-        )
+            }
+        }
     }
 }
 
@@ -290,7 +356,7 @@ fun ConnectionStatus(isConnected: Boolean, networkStatus: ConnectivityStatus, on
                         isOffline -> Color.Gray
                         else -> Color.Red
                     }, 
-                    shape = MaterialTheme.shapes.extraSmall
+                    shape = CircleShape
                 )
         )
         Spacer(Modifier.width(6.dp))
@@ -332,7 +398,6 @@ fun ClientListItem(
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Status Icon with background
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -377,7 +442,6 @@ fun ClientListItem(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.width(8.dp))
-                    // Status Badge
                     Surface(
                         color = when {
                             isDeviceOffline -> Color.Gray
@@ -434,56 +498,38 @@ fun ClientListItem(
 
 @Composable
 fun MapPreview(
-    isExpanded: Boolean,
-    onToggleExpand: () -> Unit,
     locations: Map<String, StoredLocation>,
     mapMode: MapMode,
     selectedClientId: String? = null,
     focusTrigger: Long = 0L,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val strings = LocalStrings.current
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = if (isExpanded) RectangleShape else MaterialTheme.shapes.medium,
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isExpanded) 0.dp else 4.dp)
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            if (!LocalInspectionMode.current) {
-                GoogleMapView(
-                    modifier = Modifier.fillMaxSize(),
-                    locations = locations,
-                    mapMode = mapMode,
-                    selectedClientId = selectedClientId,
-                    focusTrigger = focusTrigger,
-                    defaultLatitude = 35.699444,
-                    defaultLongitude = 51.337778
-                )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(Color.LightGray.copy(alpha = 0.3f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.LocationOn, null, tint = MaterialTheme.colorScheme.primary)
-                        Text(strings.mapPreview, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-
-            IconButton(
-                onClick = onToggleExpand,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), MaterialTheme.shapes.small)
+    
+    Box(modifier = modifier.fillMaxSize()) {
+        if (!LocalInspectionMode.current) {
+            GoogleMapView(
+                modifier = Modifier.fillMaxSize(),
+                locations = locations,
+                mapMode = mapMode,
+                selectedClientId = selectedClientId,
+                focusTrigger = focusTrigger,
+                defaultLatitude = cameraState.latitude,
+                defaultLongitude = cameraState.longitude,
+                cameraState = cameraState,
+                onCameraChanged = onCameraChanged
+            )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color.LightGray.copy(alpha = 0.3f)),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.Close else Icons.Default.Add,
-                    contentDescription = if (isExpanded) strings.collapseMap else strings.expandMap
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.LocationOn, null, tint = MaterialTheme.colorScheme.primary)
+                    Text(strings.mapPreview, style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
@@ -503,7 +549,15 @@ fun AdminScreenPreview() {
                 locations = mapOf(
                     "Client-1" to StoredLocation("Client-1", 37.7749, -122.4194, isOnline = true),
                     "Client-2" to StoredLocation("Client-2", 34.0522, -118.2437, isOnline = false)
-                )
+                ),
+                clientIdInput = "",
+                onClientIdInputChange = {},
+                isListExpanded = false,
+                onListExpandedChange = {},
+                isMapExpanded = false,
+                onMapExpandedChange = {},
+                cameraState = MapCameraState(35.6994, 51.3377, 14.0),
+                onCameraChanged = {}
             )
         }
     }

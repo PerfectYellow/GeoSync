@@ -17,7 +17,9 @@ actual fun GoogleMapView(
     selectedClientId: String?,
     focusTrigger: Long,
     defaultLatitude: Double?,
-    defaultLongitude: Double?
+    defaultLongitude: Double?,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit
 ) {
     Box(modifier = modifier.background(Color.DarkGray)) {
         Text("Map not supported on Desktop yet", color = Color.White, modifier = Modifier.align(Alignment.Center))

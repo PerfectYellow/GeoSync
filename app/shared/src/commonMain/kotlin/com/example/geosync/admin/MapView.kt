@@ -12,5 +12,7 @@ expect fun GoogleMapView(
     selectedClientId: String? = null,
     focusTrigger: Long = 0L,
     defaultLatitude: Double? = null,
-    defaultLongitude: Double? = null
+    defaultLongitude: Double? = null,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit
 )

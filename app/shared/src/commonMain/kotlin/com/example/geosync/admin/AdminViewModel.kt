@@ -13,6 +13,12 @@ enum class MapMode {
     OPEN_STREET, MAP_IR, INTERNAL, OFFLINE
 }
 
+data class MapCameraState(
+    val latitude: Double,
+    val longitude: Double,
+    val zoom: Double
+)
+
 class AdminViewModel : ViewModel() {
     private val client = geoHttpClient
 
@@ -27,6 +33,18 @@ class AdminViewModel : ViewModel() {
 
     private val _mapMode = MutableStateFlow(MapMode.OPEN_STREET)
     val mapMode: StateFlow<MapMode> = _mapMode.asStateFlow()
+
+    private val _clientIdInput = MutableStateFlow("")
+    val clientIdInput: StateFlow<String> = _clientIdInput.asStateFlow()
+
+    private val _isListExpanded = MutableStateFlow(false)
+    val isListExpanded: StateFlow<Boolean> = _isListExpanded.asStateFlow()
+
+    private val _isMapExpanded = MutableStateFlow(false)
+    val isMapExpanded: StateFlow<Boolean> = _isMapExpanded.asStateFlow()
+
+    private val _cameraState = MutableStateFlow(MapCameraState(35.6994, 51.3377, 14.0))
+    val cameraState: StateFlow<MapCameraState> = _cameraState.asStateFlow()
 
     private var lastOnlineMode = MapMode.OPEN_STREET
 
@@ -66,6 +84,22 @@ class AdminViewModel : ViewModel() {
                 _mapMode.value = lastOnlineMode
             }
         }
+    }
+
+    fun setClientIdInput(input: String) {
+        _clientIdInput.value = input
+    }
+
+    fun setListExpanded(expanded: Boolean) {
+        _isListExpanded.value = expanded
+    }
+
+    fun setMapExpanded(expanded: Boolean) {
+        _isMapExpanded.value = expanded
+    }
+
+    fun updateCameraState(state: MapCameraState) {
+        _cameraState.value = state
     }
 
     private fun connect() {

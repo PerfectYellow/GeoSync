@@ -48,11 +48,6 @@ import org.maplibre.android.annotations.MarkerOptions
 import java.io.File
 import java.io.FileOutputStream
 
-data class MapCameraState(
-    val latitude: Double,
-    val longitude: Double,
-    val zoom: Double
-)
 
 @Composable
 actual fun GoogleMapView(
@@ -62,13 +57,10 @@ actual fun GoogleMapView(
     selectedClientId: String?,
     focusTrigger: Long,
     defaultLatitude: Double?,
-    defaultLongitude: Double?
+    defaultLongitude: Double?,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit
 ) {
-    // Hoist camera state to sync between engines
-    var cameraState by remember { 
-        mutableStateOf(MapCameraState(defaultLatitude ?: 35.6994, defaultLongitude ?: 51.3377, 14.0)) 
-    }
-    
     // Trigger for programmatic zoom/position changes
     var externalMoveTrigger by remember { mutableStateOf(0L) }
 
@@ -82,7 +74,7 @@ actual fun GoogleMapView(
                 focusTrigger = focusTrigger,
                 externalMoveTrigger = externalMoveTrigger,
                 cameraState = cameraState,
-                onCameraChanged = { cameraState = it }
+                onCameraChanged = onCameraChanged
             )
         } else {
             OsmdroidMapView(
@@ -95,7 +87,7 @@ actual fun GoogleMapView(
                 defaultLatitude = defaultLatitude,
                 defaultLongitude = defaultLongitude,
                 cameraState = cameraState,
-                onCameraChanged = { cameraState = it }
+                onCameraChanged = onCameraChanged
             )
         }
 
@@ -108,7 +100,7 @@ actual fun GoogleMapView(
         ) {
             FilledIconButton(
                 onClick = {
-                    cameraState = cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(20.0))
+                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(20.0)))
                     externalMoveTrigger++
                 },
                 modifier = Modifier.size(44.dp),
@@ -122,7 +114,7 @@ actual fun GoogleMapView(
 
             FilledIconButton(
                 onClick = {
-                    cameraState = cameraState.copy(zoom = (cameraState.zoom - 1).coerceAtLeast(1.0))
+                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom - 1).coerceAtLeast(1.0)))
                     externalMoveTrigger++
                 },
                 modifier = Modifier.size(44.dp),
@@ -141,7 +133,7 @@ actual fun GoogleMapView(
                         val lngs = locations.values.map { it.longitude }
                         val avgLat = lats.average()
                         val avgLng = lngs.average()
-                        cameraState = cameraState.copy(latitude = avgLat, longitude = avgLng)
+                        onCameraChanged(cameraState.copy(latitude = avgLat, longitude = avgLng))
                         externalMoveTrigger++
                     },
                     modifier = Modifier.size(44.dp),
