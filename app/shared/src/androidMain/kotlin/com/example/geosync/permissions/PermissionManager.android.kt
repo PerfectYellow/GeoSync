@@ -13,6 +13,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @Composable
 actual fun rememberPermissionState(
@@ -20,6 +23,7 @@ actual fun rememberPermissionState(
     onResult: (Boolean) -> Unit
 ): PermissionState {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val androidPermissions = when (permission) {
         PermissionNames.LOCATION -> arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -28,22 +32,31 @@ actual fun rememberPermissionState(
         else -> emptyArray()
     }
 
-    var hasPermission by remember {
-        mutableStateOf(
-            androidPermissions.all {
-                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-            }
-        )
+    fun checkPermission(): Boolean = androidPermissions.all {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
 
-    var shouldShowRationale by remember {
-        mutableStateOf(
-            androidPermissions.any {
-                (context as? Activity)?.let { activity ->
-                    ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
-                } ?: false
+    fun checkRationale(): Boolean = androidPermissions.any {
+        (context as? Activity)?.let { activity ->
+            ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+        } ?: false
+    }
+
+    var hasPermission by remember { mutableStateOf(checkPermission()) }
+    var shouldShowRationale by remember { mutableStateOf(checkRationale()) }
+
+    // Update state when returning from settings or foregrounding the app
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasPermission = checkPermission()
+                shouldShowRationale = checkRationale()
             }
-        )
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val launcher = rememberLauncherForActivityResult(
@@ -51,11 +64,7 @@ actual fun rememberPermissionState(
     ) { permissionsMap ->
         val isGranted = permissionsMap.values.any { it }
         hasPermission = isGranted
-        shouldShowRationale = androidPermissions.any {
-            (context as? Activity)?.let { activity ->
-                ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
-            } ?: false
-        }
+        shouldShowRationale = checkRationale()
         onResult(isGranted)
     }
 

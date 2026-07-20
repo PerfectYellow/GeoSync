@@ -52,7 +52,7 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
-            implementation(libs.osmdroid)
+            api(libs.osmdroid)
             implementation(libs.osmdroid.mapsforge)
             implementation(libs.mapsforge.android)
             api(libs.maplibre.android)

@@ -58,6 +58,7 @@ object OfflineMapConfig {
     const val FILE_BASE_NAME = "Tehran"
     const val ASSET_FOLDER = "map"
     const val STYLE_JSON_NAME = "style.json"
+    const val OSM_STYLE_NAME = "osm_raster_style.json"
 
     val PREFERRED_FORMAT = MapFormat.MAPFORGE
 
@@ -65,13 +66,13 @@ object OfflineMapConfig {
      * Scale factor for Mapsforge (.map). 
      * Lower values (e.g., 0.3f - 0.5f) make text and lines smaller.
      */
-    const val MAPFORGE_SCALE_MODIFIER = 0.3f
+    const val MAPFORGE_SCALE_MODIFIER = 0.35f
     
     /**
      * Scale factor for client markers.
      * Lower values make the bubble markers smaller.
      */
-    const val MARKER_SCALE_MODIFIER = 0.001f
+    const val MARKER_SCALE_MODIFIER = 0.5f
 
     /**
      * Theme for Mapsforge. OSMARENDER is detailed, DEFAULT is basic.
@@ -89,6 +90,7 @@ object OfflineMapConfig {
     val pmtilesAssetPath get() = "$ASSET_FOLDER/$pmtilesFileName"
     val mapforgeAssetPath get() = "$ASSET_FOLDER/$mapforgeFileName"
     val styleAssetPath get() = "$ASSET_FOLDER/$STYLE_JSON_NAME"
+    val osmStyleAssetPath get() = "$ASSET_FOLDER/$OSM_STYLE_NAME"
 }
 
 
@@ -136,7 +138,7 @@ actual fun GoogleMapView(
     }
 
     Box(modifier = modifier) {
-        if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL || useMapLibreForOffline) {
+        if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL || mapMode == MapMode.OPEN_STREET || useMapLibreForOffline) {
             MapLibreMapView(
                 modifier = Modifier,
                 locations = locations,
@@ -232,7 +234,6 @@ private fun MapLibreMapView(
     onCameraChanged: (MapCameraState) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val labelBgColor = MaterialTheme.colorScheme.primary.toArgb()
     
     // Ensure offline assets are copied
     var assetsReady by remember { mutableStateOf(false) }
@@ -264,11 +265,30 @@ private fun MapLibreMapView(
                     Log.e("MapView", "Failed to copy style.json", e)
                 }
             }
+
+            // Also ensure OSM style is available in cache
+            val osmStyleFile = File(context.cacheDir, OfflineMapConfig.OSM_STYLE_NAME)
+            if (!osmStyleFile.exists()) {
+                try {
+                    context.assets.open(OfflineMapConfig.osmStyleAssetPath).use { input ->
+                        FileOutputStream(osmStyleFile).use { output -> input.copyTo(output) }
+                    }
+                } catch (e: Exception) {}
+            }
             assetsReady = true
         }
     }
 
     val styleUrl = when {
+        mapMode == MapMode.OPEN_STREET -> {
+            val osmStyleFile = File(context.cacheDir, OfflineMapConfig.OSM_STYLE_NAME)
+            if (assetsReady && osmStyleFile.exists()) {
+                "file://${osmStyleFile.absolutePath}"
+            } else {
+                // Fallback to internal if file not ready, though MapLibre allows asset:// directly
+                "asset://${OfflineMapConfig.osmStyleAssetPath}"
+            }
+        }
         mapMode == MapMode.INTERNAL -> {
             val protocol = if (ApiConfig.isSecure) "https" else "http"
             "$protocol://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/map/style.json"
@@ -294,10 +314,19 @@ private fun MapLibreMapView(
                 map.uiSettings.isRotateGesturesEnabled = true
                 map.uiSettings.isTiltGesturesEnabled = true
 
+                // Initialize camera IMMEDIATELY to avoid global map flash
+                map.moveCamera(CameraUpdateFactory.newLatLngZoom(
+                    LatLng(cameraState.latitude, cameraState.longitude),
+                    cameraState.zoom
+                ))
+
                 map.addOnCameraIdleListener {
                     val pos = map.cameraPosition
                     pos.target?.let { target ->
-                        onCameraChanged(MapCameraState(target.latitude, target.longitude, pos.zoom))
+                        // Only report if it's NOT the uninitialized default state
+                        if (target.latitude != 0.0 || target.longitude != 0.0 || pos.zoom > 1.0) {
+                            onCameraChanged(MapCameraState(target.latitude, target.longitude, pos.zoom))
+                        }
                     }
                 }
             }
@@ -348,7 +377,8 @@ private fun MapLibreMapView(
                 locations.forEach { (id, location) ->
                     val pos = LatLng(location.latitude, location.longitude)
                     val shortId = if (id.length > 10) "${id.take(4)}...${id.takeLast(4)}" else id
-                    val iconBitmap = createTextBitmap(context, shortId, labelBgColor)
+                    val clientColor = AdminUtils.getClientColor(id).toArgb()
+                    val iconBitmap = createTextBitmap(context, shortId, clientColor)
                     val icon = IconFactory.getInstance(context).fromBitmap(iconBitmap)
                     
                     map.addMarker(MarkerOptions().position(pos).icon(icon).title(shortId))
@@ -385,12 +415,11 @@ private fun OsmdroidMapView(
     onCameraChanged: (MapCameraState) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val labelBgColor = MaterialTheme.colorScheme.primary.toArgb()
     
     val isInitialized = remember { mutableStateOf(false) }
     LaunchedEffect(context) {
+        // Redundant setting here as a safety measure for tile downloader
         org.osmdroid.config.Configuration.getInstance().userAgentValue = context.packageName
-        org.osmdroid.config.Configuration.getInstance().load(context, context.getSharedPreferences("osmdroid", android.content.Context.MODE_PRIVATE))
         isInitialized.value = true
     }
 
@@ -444,7 +473,7 @@ private fun OsmdroidMapView(
                         }
                         private fun updateSharedCamera() {
                             val center = mapCenter as? GeoPoint
-                            if (center != null) {
+                            if (center != null && (center.latitude != 0.0 || center.longitude != 0.0 || zoomLevelDouble > 1.0)) {
                                 onCameraChanged(MapCameraState(center.latitude, center.longitude, zoomLevelDouble))
                             }
                         }
@@ -486,8 +515,7 @@ private fun OsmdroidMapView(
                                     }
                                 }
                             }
-                            MapMode.MAP_IR -> {} // Swapped in GoogleMapView
-                            else -> {
+                            MapMode.MAP_IR, MapMode.INTERNAL, MapMode.OPEN_STREET -> {
                                 mapView.setTileProvider(MapTileProviderBasic(context, TileSourceFactory.MAPNIK))
                                 mapView.setTileSource(TileSourceFactory.MAPNIK)
                                 mapView.setUseDataConnection(true)
@@ -509,9 +537,10 @@ private fun OsmdroidMapView(
                 locations.forEach { (id, location) ->
                     val point = GeoPoint(location.latitude, location.longitude)
                     val shortId = if (id.length > 10) "${id.take(4)}...${id.takeLast(4)}" else id
+                    val clientColor = AdminUtils.getClientColor(id).toArgb()
                     val marker = Marker(mapView).apply {
                         position = point
-                        icon = createTextDrawable(context, shortId, labelBgColor)
+                        icon = createTextDrawable(context, shortId, clientColor)
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM) // Tail points to coordinate
                         title = shortId
                     }
@@ -551,22 +580,26 @@ private fun createTextBitmap(context: android.content.Context, text: String, bgC
     val tailSize = 6f * scale
     val cornerRadius = 6f * scale
     
-    val width = bounds.width() + paddingH * 2
-    val height = bounds.height() + paddingV * 2 + tailSize
-    val bitmap = Bitmap.createBitmap(width.toInt(), height.toInt(), Bitmap.Config.ARGB_8888)
+    val widthFloat = (bounds.width() + paddingH * 2).coerceAtLeast(1f)
+    val heightFloat = (bounds.height() + paddingV * 2 + tailSize).coerceAtLeast(1f)
+    
+    val width = kotlin.math.ceil(widthFloat).toInt()
+    val height = kotlin.math.ceil(heightFloat).toInt()
+    
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     
-    val rectF = RectF(0f, 0f, width, height - tailSize)
+    val rectF = RectF(0f, 0f, widthFloat, heightFloat - tailSize)
     canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, backgroundPaint)
     
     val path = android.graphics.Path()
-    path.moveTo(width / 2f - tailSize, height - tailSize)
-    path.lineTo(width / 2f + tailSize, height - tailSize)
-    path.lineTo(width / 2f, height)
+    path.moveTo(widthFloat / 2f - tailSize, heightFloat - tailSize)
+    path.lineTo(widthFloat / 2f + tailSize, heightFloat - tailSize)
+    path.lineTo(widthFloat / 2f, heightFloat)
     path.close()
     canvas.drawPath(path, backgroundPaint)
     
-    canvas.drawText(text, width / 2f, (height - tailSize) / 2f - bounds.centerY(), paint)
+    canvas.drawText(text, widthFloat / 2f, (heightFloat - tailSize) / 2f - bounds.centerY(), paint)
     return bitmap
 }
 

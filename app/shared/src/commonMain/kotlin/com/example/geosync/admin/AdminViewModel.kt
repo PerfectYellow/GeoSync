@@ -43,7 +43,7 @@ class AdminViewModel : ViewModel() {
     private val _isMapExpanded = MutableStateFlow(false)
     val isMapExpanded: StateFlow<Boolean> = _isMapExpanded.asStateFlow()
 
-    private val _cameraState = MutableStateFlow(MapCameraState(35.6994, 51.3377, 14.0))
+    private val _cameraState = MutableStateFlow(MapCameraState(35.6994, 51.3377, 11.0))
     val cameraState: StateFlow<MapCameraState> = _cameraState.asStateFlow()
 
     private var lastOnlineMode = MapMode.OPEN_STREET
@@ -71,7 +71,7 @@ class AdminViewModel : ViewModel() {
         
         _mapMode.value = mode
         if (mode == MapMode.OFFLINE) {
-            // Force re-center to Tehran when switching to offline
+            // Force re-center to Tehran when switching to offline - Keep original zoom for offline
             _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
         }
         
@@ -82,7 +82,11 @@ class AdminViewModel : ViewModel() {
 
     fun handleNetworkChange(isOffline: Boolean) {
         if (isOffline) {
-            _mapMode.value = MapMode.OFFLINE
+            if (_mapMode.value != MapMode.OFFLINE) {
+                _mapMode.value = MapMode.OFFLINE
+                // Force re-center to Tehran when switching to offline due to connection loss
+                _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
+            }
         } else {
             // Return to previous online mode if it was swapped to OFFLINE due to connection loss
             if (_mapMode.value == MapMode.OFFLINE) {
@@ -104,6 +108,10 @@ class AdminViewModel : ViewModel() {
     }
 
     fun updateCameraState(state: MapCameraState) {
+        // Filter out "Null Island" initialization reports from map engines
+        if (state.latitude == 0.0 && state.longitude == 0.0 && state.zoom <= 1.0) {
+            return
+        }
         _cameraState.value = state
     }
 
@@ -178,6 +186,7 @@ class AdminViewModel : ViewModel() {
 
     fun addClient(rawClientId: String) {
         val clientId = rawClientId.trim().lowercase()
+        println("AdminViewModel: Adding client $clientId") // Logging for debugging
         val strings = LocalizationManager.strings
         if (clientId.isBlank()) return
         

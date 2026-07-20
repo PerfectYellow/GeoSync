@@ -9,6 +9,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.example.geosync.network.androidContext
 import okhttp3.OkHttpClient
 import org.mapsforge.map.android.graphics.AndroidGraphicFactory
+import org.osmdroid.config.Configuration
 import org.maplibre.android.MapLibre
 import org.maplibre.android.WellKnownTileServer
 import org.maplibre.android.module.http.HttpRequestUtil
@@ -20,6 +21,10 @@ class MainActivity : ComponentActivity() {
         
         androidContext = applicationContext
         AndroidGraphicFactory.createInstance(application)
+        
+        // OSMDROID Configuration - Must be set BEFORE any MapView is created
+        Configuration.getInstance().load(this, getSharedPreferences("osmdroid", MODE_PRIVATE))
+        Configuration.getInstance().userAgentValue = packageName
 
         // Initialize MapLibre FIRST with dummy key and MapLibre tile server
         // This satisfies the internal validation check
@@ -34,6 +39,9 @@ class MainActivity : ComponentActivity() {
                 val requestBuilder = original.newBuilder()
                     .header("x-api-key", apiKey)
                     .header("Mapir-SDK", "android")
+                    // Full compliance with OSM usage policy
+                    .header("User-Agent", "GeoSync/1.0 ($packageName; contact@icodes.ir) MapLibre/Native")
+                    .header("Referer", "android://$packageName") 
                     .method(original.method, original.body)
                 chain.proceed(requestBuilder.build())
             }

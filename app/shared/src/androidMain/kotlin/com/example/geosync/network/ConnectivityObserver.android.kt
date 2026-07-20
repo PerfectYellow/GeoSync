@@ -42,11 +42,11 @@ class AndroidConnectivityObserver(
                 private fun updateStatus() {
                     val activeNetwork = connectivityManager.activeNetwork
                     val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
-                    // NET_CAPABILITY_VALIDATED ensures that the system has successfully probed the internet.
-                    // NET_CAPABILITY_INTERNET just means the network is technically capable of internet (but might be behind a portal).
+                    // NET_CAPABILITY_INTERNET means the network is technically capable of internet.
+                    // We don't wait for NET_CAPABILITY_VALIDATED here because it can take 2-3 seconds at launch,
+                    // causing a transient "Offline" state that triggers map mode swaps.
                     val isOnline = capabilities != null && 
-                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                     
                     Log.d("Connectivity", "Network update: isOnline=$isOnline")
                     launch { send(if (isOnline) ConnectivityStatus.Online else ConnectivityStatus.Offline) }
@@ -57,8 +57,7 @@ class AndroidConnectivityObserver(
             val initialNetwork = connectivityManager.activeNetwork
             val initialCaps = connectivityManager.getNetworkCapabilities(initialNetwork)
             val initialOnline = initialCaps != null && 
-                    initialCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    initialCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    initialCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             
             launch { 
                 send(if (initialOnline) ConnectivityStatus.Online else ConnectivityStatus.Offline) 

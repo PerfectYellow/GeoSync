@@ -385,6 +385,7 @@ fun ClientListItem(
     val shortId = if (id.length > 13) "${id.take(6)}...${id.takeLast(4)}" else id
     val isDeviceOffline = networkStatus == ConnectivityStatus.Offline
     val strings = LocalStrings.current
+    val clientColor = AdminUtils.getClientColor(id)
     
     Surface(
         color = Color.Transparent,
@@ -406,8 +407,7 @@ fun ClientListItem(
                             isDeviceOffline -> MaterialTheme.colorScheme.surfaceVariant
                             !isAdminConnected -> MaterialTheme.colorScheme.surfaceVariant
                             location == null -> MaterialTheme.colorScheme.surfaceVariant
-                            isOnline -> Color(0xFFE8F5E9)
-                            else -> Color(0xFFF5F5F5)
+                            else -> clientColor.copy(alpha = 0.15f) // Subtle background of client's color
                         },
                         shape = CircleShape
                     ),
@@ -426,8 +426,7 @@ fun ClientListItem(
                         isDeviceOffline -> Color.Gray
                         !isAdminConnected -> Color.Gray
                         location == null -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        isOnline -> Color(0xFF2E7D32)
-                        else -> Color.Gray
+                        else -> clientColor // Primary client color for the icon
                     }
                 )
             }
