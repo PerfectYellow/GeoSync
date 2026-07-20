@@ -19,7 +19,7 @@ data class MapCameraState(
     val zoom: Double
 )
 
-class AdminViewModel : ViewModel() {
+class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val client = geoHttpClient
 
     private val _isConnected = MutableStateFlow(false)
@@ -55,7 +55,9 @@ class AdminViewModel : ViewModel() {
     private var errorNotified = false
 
     init {
-        connect()
+        if (!isPreview) {
+            connect()
+        }
     }
 
     fun retryConnection() {
@@ -191,7 +193,10 @@ class AdminViewModel : ViewModel() {
         if (clientId.isBlank()) return
         
         val uuidRegex = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex()
-        if (!clientId.matches(uuidRegex)) {
+        val isCustomId = clientId.startsWith("@") && clientId.length >= 3
+        val isUuid = clientId.matches(uuidRegex)
+
+        if (!isUuid && !isCustomId) {
             NotificationManager.show(strings.invalidClientIdUuid, NotificationType.ERROR)
             return
         }

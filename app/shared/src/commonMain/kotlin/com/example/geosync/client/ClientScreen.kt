@@ -17,8 +17,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -40,9 +42,11 @@ import com.example.geosync.NotificationManager
 
 @Composable
 fun ClientScreen(
-    viewModel: ClientViewModel = viewModel { ClientViewModel() },
     paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
+    val isPreview = LocalInspectionMode.current
+    val viewModel: ClientViewModel = viewModel { ClientViewModel(isPreview) }
+    
     val trackingId by viewModel.trackingId.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
@@ -101,6 +105,8 @@ fun ClientScreen(
                     showPermissionRationale = true
                 }
             },
+            onRefreshId = { viewModel.refreshTrackingId() },
+            onUpdateCustomId = { viewModel.updateCustomId(it) },
             onRequestBackgroundPermission = {
                 showBackgroundRationale = true
             },
@@ -214,6 +220,8 @@ fun ClientScreenContent(
     hasBackgroundPermission: Boolean = true,
     isBatteryOptimized: Boolean = false,
     onToggleTracking: () -> Unit,
+    onRefreshId: () -> Unit = {},
+    onUpdateCustomId: (String) -> Unit = {},
     onRequestBackgroundPermission: () -> Unit = {},
     onFixBatteryOptimization: () -> Unit = {},
     paddingValues: PaddingValues = PaddingValues(0.dp)
@@ -243,7 +251,7 @@ fun ClientScreenContent(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
-                // LanguageSelector()
+                LanguageSelector()
             }
 
             Text(
@@ -303,7 +311,10 @@ fun ClientScreenContent(
             ) { connected ->
                 if (!connected) {
                     IdleView(
+                        trackingId = trackingId,
                         onStart = onToggleTracking,
+                        onRefreshId = onRefreshId,
+                        onUpdateCustomId = onUpdateCustomId,
                         isLoading = connectionStatus == ConnectionStatus.CONNECTING
                     )
                 } else {
@@ -397,8 +408,20 @@ private fun WarningItem(
 }
 
 @Composable
-private fun IdleView(onStart: () -> Unit, isLoading: Boolean) {
+private fun IdleView(
+    trackingId: String,
+    onStart: () -> Unit,
+    onRefreshId: () -> Unit,
+    onUpdateCustomId: (String) -> Unit,
+    isLoading: Boolean
+) {
     val strings = LocalStrings.current
+    val clipboardManager = LocalClipboardManager.current
+    var isEditing by remember { mutableStateOf(false) }
+    var editValue by remember(trackingId) { 
+        mutableStateOf(if (trackingId.startsWith("@")) trackingId.removePrefix("@") else "") 
+    }
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -418,7 +441,154 @@ private fun IdleView(onStart: () -> Unit, isLoading: Boolean) {
             }
         }
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        // ID Display and Controls
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .shadow(elevation = 2.dp, shape = RoundedCornerShape(20.dp)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        ) {
+            AnimatedContent(
+                targetState = isEditing,
+                label = "IdEditAnimation",
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
+                }
+            ) { editing ->
+                if (editing) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = editValue,
+                            onValueChange = { 
+                                if (it.length <= 20) {
+                                    editValue = it.filter { char -> char.isLetterOrDigit() || char == '_' }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            prefix = { Text("@", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+                            placeholder = { Text(strings.usernamePlaceholder) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                        
+                        IconButton(
+                            onClick = { 
+                                if (editValue.length >= 2) {
+                                    onUpdateCustomId("@$editValue")
+                                    isEditing = false
+                                }
+                            },
+                            enabled = editValue.length >= 2
+                        ) {
+                            Icon(Icons.Default.Done, contentDescription = strings.save, tint = MaterialTheme.colorScheme.primary)
+                        }
+                        
+                        IconButton(onClick = { isEditing = false }) {
+                            Icon(Icons.Default.Close, contentDescription = strings.cancel, tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else {
+                        Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp))
+                                .clickable { 
+                                    clipboardManager.setText(AnnotatedString(trackingId))
+                                }
+                                .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (trackingId.startsWith("@")) Icons.Default.Person else Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column {
+                                Text(
+                                    text = strings.sessionUuid,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                val displayText = if (trackingId.startsWith("@")) {
+                                    trackingId
+                                } else {
+                                    if (trackingId.length > 13) "${trackingId.take(13)}..." else trackingId
+                                }
+                                Text(
+                                    text = displayText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
+                        
+                        Row(
+                            modifier = Modifier.padding(end = 16.dp, top = 12.dp, bottom = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = onRefreshId,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = strings.refresh,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(4.dp))
+                            
+                            IconButton(
+                                onClick = { isEditing = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = strings.edit,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
         
         Text(
             text = strings.readyToSync,

@@ -27,7 +27,17 @@ var androidContext: Context
     get() = _androidContext ?: throw IllegalStateException("Android context not initialized")
     set(value) { _androidContext = value }
 
-actual fun getPlatformTracker(): LocationTracker = AndroidLocationTracker(androidContext)
+actual fun getPlatformTracker(): LocationTracker {
+    val context = _androidContext
+    return if (context == null) {
+        object : LocationTracker {
+            override fun startTracking(trackingId: String) {}
+            override fun stopTracking() {}
+        }
+    } else {
+        AndroidLocationTracker(context)
+    }
+}
 
 actual fun isIgnoringBatteryOptimizations(): Boolean {
     val context = _androidContext ?: return true

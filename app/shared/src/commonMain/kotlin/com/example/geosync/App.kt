@@ -21,11 +21,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLayoutDirection
 import com.example.geosync.localization.LocalStrings
+import com.example.geosync.localization.EnStrings
 import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.admin.AdminScreen
 import com.example.geosync.client.ClientScreen
 import com.example.geosync.network.ConnectivityStatus
 import com.example.geosync.network.rememberConnectivityObserver
+
+@Composable
+fun App() {
+    val strings = LocalizationManager.strings
+    val layoutDirection = LocalizationManager.layoutDirection
+
+    CompositionLocalProvider(
+        LocalStrings provides strings,
+        LocalLayoutDirection provides layoutDirection
+    ) {
+        MaterialTheme {
+            var selectedTab by remember { mutableStateOf(0) }
+            AppContent(
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it }
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -166,29 +186,33 @@ private fun TabItem(
 }
 
 @Composable
-@Preview
-fun App() {
+@Preview(name = "Admin Tab")
+fun AdminTabPreview() {
     CompositionLocalProvider(
-        LocalStrings provides LocalizationManager.strings,
-        LocalLayoutDirection provides LocalizationManager.layoutDirection
+        LocalStrings provides EnStrings,
+        LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
     ) {
         MaterialTheme {
-            var selectedTab by remember { mutableStateOf(0) }
             AppContent(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it }
+                selectedTab = 0,
+                onTabSelected = {}
             )
         }
     }
 }
 
-@Preview
 @Composable
-fun AppClientTabPreview() {
-    MaterialTheme {
-        AppContent(
-            selectedTab = 1,
-            onTabSelected = {}
-        )
+@Preview(name = "Client Tab")
+fun ClientTabPreview() {
+    CompositionLocalProvider(
+        LocalStrings provides EnStrings,
+        LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+    ) {
+        MaterialTheme {
+            AppContent(
+                selectedTab = 1,
+                onTabSelected = {}
+            )
+        }
     }
 }

@@ -78,6 +78,12 @@ interface AppStrings {
     val backgroundLocationWarning: String
     val batteryOptimizationWarning: String
     val fix: String
+    val refresh: String
+    val edit: String
+    val enterCustomId: String
+    val invalidCustomId: String
+    val save: String
+    val usernamePlaceholder: String
 }
 
 object EnStrings : AppStrings {
@@ -92,7 +98,7 @@ object EnStrings : AppStrings {
     override val clientIdToTrack = "Client ID to Track"
     override val enterClientId = "Enter client ID..."
     override val addClient = "Add Client"
-    override val invalidUuidFormat = "Invalid UUID format (e.g. 123e4567-e89b...)"
+    override val invalidUuidFormat = "Invalid ID format (UUID or @username)"
     override val trackedClients: (Int) -> String = { count -> "Tracked Clients ($count)" }
     override val noClientsAdded = "No clients added yet"
     override val statusOffline = "OFFLINE"
@@ -132,7 +138,7 @@ object EnStrings : AppStrings {
     override val connectionFailed: (String?) -> String = { msg -> "Connection failed: $msg" }
     override val serverError: (String?) -> String = { msg -> "Server error: $msg" }
     override val connectionLost: (String?) -> String = { msg -> "Connection lost: $msg" }
-    override val invalidClientIdUuid = "Invalid Client ID format. Must be a valid UUID."
+    override val invalidClientIdUuid = "Invalid Client ID. Use UUID or @username."
     override val clientAlreadyTracked: (String) -> String = { id -> "Client $id is already being tracked" }
     override val waitingForConnection = "Waiting for connection..."
     override val failedToSubscribe: (String?) -> String = { msg -> "Failed to subscribe: $msg" }
@@ -154,6 +160,12 @@ object EnStrings : AppStrings {
     override val backgroundLocationWarning = "Background tracking might be limited. 'Allow all the time' is recommended."
     override val batteryOptimizationWarning = "Battery optimization is active. Tracking might be stopped by the system. Please disable it for this app."
     override val fix = "Fix"
+    override val refresh = "Refresh"
+    override val edit = "Edit ID"
+    override val enterCustomId = "Enter custom ID (must start with @)"
+    override val invalidCustomId = "Custom ID must start with @ and have at least 3 characters"
+    override val save = "Save"
+    override val usernamePlaceholder = "username"
 }
 
 object FaStrings : AppStrings {
@@ -168,7 +180,7 @@ object FaStrings : AppStrings {
     override val clientIdToTrack = "شناسه کاربر برای ردیابی"
     override val enterClientId = "شناسه کاربر را وارد کنید..."
     override val addClient = "افزودن کاربر"
-    override val invalidUuidFormat = "فرمت UUID نامعتبر است (مثلاً 123e4567-e89b...)"
+    override val invalidUuidFormat = "فرمت شناسه نامعتبر است (UUID یا @username)"
     override val trackedClients: (Int) -> String = { count -> "کاربران ردیابی شده ($count)" }
     override val noClientsAdded = "هنوز کاربری اضافه نشده است"
     override val statusOffline = "آفلاین"
@@ -208,7 +220,7 @@ object FaStrings : AppStrings {
     override val connectionFailed: (String?) -> String = { msg -> "اتصال ناموفق بود: $msg" }
     override val serverError: (String?) -> String = { msg -> "خطای سرور: $msg" }
     override val connectionLost: (String?) -> String = { msg -> "اتصال قطع شد: $msg" }
-    override val invalidClientIdUuid = "فرمت شناسه کاربر نامعتبر است. باید یک UUID معتبر باشد."
+    override val invalidClientIdUuid = "شناسه کاربر نامعتبر است. از UUID یا @username استفاده کنید."
     override val clientAlreadyTracked: (String) -> String = { id -> "کاربر $id در حال ردیابی است" }
     override val waitingForConnection = "در انتظار اتصال..."
     override val failedToSubscribe: (String?) -> String = { msg -> "اشتراک ناموفق بود: $msg" }
@@ -230,6 +242,12 @@ object FaStrings : AppStrings {
     override val backgroundLocationWarning = "ردیابی در پس‌زمینه ممکن است محدود باشد. تنظیم «همیشه اجازه داده شود» توصیه می‌شود."
     override val batteryOptimizationWarning = "بهینه‌سازی باتری فعال است. ممکن است سیستم ردیابی را متوقف کند. لطفاً آن را برای این برنامه غیرفعال کنید."
     override val fix = "بررسی"
+    override val refresh = "نوسازی"
+    override val edit = "ویرایش شناسه"
+    override val enterCustomId = "شناسه دلخواه وارد کنید (باید با @ شروع شود)"
+    override val invalidCustomId = "شناسه دلخواه باید با @ شروع شود و حداقل ۳ کاراکتر باشد"
+    override val save = "ذخیره"
+    override val usernamePlaceholder = "نام کاربری"
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {
@@ -243,39 +261,50 @@ object LocalizationManager {
             Settings()
         } catch (e: Exception) {
             object : Settings {
-                override val keys: Set<String> get() = emptySet()
-                override val size: Int get() = 0
-                override fun clear() {}
-                override fun remove(key: String) {}
-                override fun hasKey(key: String): Boolean = false
-                override fun putInt(key: String, value: Int) {}
-                override fun getInt(key: String, defaultValue: Int): Int = defaultValue
-                override fun putLong(key: String, value: Long) {}
-                override fun getLong(key: String, defaultValue: Long): Long = defaultValue
-                override fun putString(key: String, value: String) {}
-                override fun getString(key: String, defaultValue: String): String = defaultValue
-                override fun putFloat(key: String, value: Float) {}
-                override fun getFloat(key: String, defaultValue: Float): Float = defaultValue
-                override fun putDouble(key: String, value: Double) {}
-                override fun getDouble(key: String, defaultValue: Double): Double = defaultValue
-                override fun putBoolean(key: String, value: Boolean) {}
-                override fun getBoolean(key: String, defaultValue: Boolean): Boolean = defaultValue
-                override fun getIntOrNull(key: String): Int? = null
-                override fun getLongOrNull(key: String): Long? = null
-                override fun getStringOrNull(key: String): String? = null
-                override fun getFloatOrNull(key: String): Float? = null
-                override fun getDoubleOrNull(key: String): Double? = null
-                override fun getBooleanOrNull(key: String): Boolean? = null
+                private val map = mutableMapOf<String, Any>()
+                override val keys: Set<String> get() = map.keys
+                override val size: Int get() = map.size
+                override fun clear() { map.clear() }
+                override fun remove(key: String) { map.remove(key) }
+                override fun hasKey(key: String): Boolean = map.containsKey(key)
+                override fun putInt(key: String, value: Int) { map[key] = value }
+                override fun getInt(key: String, defaultValue: Int): Int = map[key] as? Int ?: defaultValue
+                override fun putLong(key: String, value: Long) { map[key] = value }
+                override fun getLong(key: String, defaultValue: Long): Long = map[key] as? Long ?: defaultValue
+                override fun putString(key: String, value: String) { map[key] = value }
+                override fun getString(key: String, defaultValue: String): String = map[key] as? String ?: defaultValue
+                override fun putFloat(key: String, value: Float) { map[key] = value }
+                override fun getFloat(key: String, defaultValue: Float): Float = map[key] as? Float ?: defaultValue
+                override fun putDouble(key: String, value: Double) { map[key] = value }
+                override fun getDouble(key: String, defaultValue: Double): Double = map[key] as? Double ?: defaultValue
+                override fun putBoolean(key: String, value: Boolean) { map[key] = value }
+                override fun getBoolean(key: String, defaultValue: Boolean): Boolean = map[key] as? Boolean ?: defaultValue
+                override fun getIntOrNull(key: String): Int? = map[key] as? Int
+                override fun getLongOrNull(key: String): Long? = map[key] as? Long
+                override fun getStringOrNull(key: String): String? = map[key] as? String
+                override fun getFloatOrNull(key: String): Float? = map[key] as? Float
+                override fun getDoubleOrNull(key: String): Double? = map[key] as? Double
+                override fun getBooleanOrNull(key: String): Boolean? = map[key] as? Boolean
             }
         }
     }
     private const val KEY_LANGUAGE = "selected_language"
 
-    private var _currentLanguage by mutableStateOf(loadLanguage())
+    private var _currentLanguageState: MutableState<Language>? = null
+    
     var currentLanguage: Language
-        get() = _currentLanguage
+        get() {
+            if (_currentLanguageState == null) {
+                _currentLanguageState = mutableStateOf(loadLanguage())
+            }
+            return _currentLanguageState!!.value
+        }
         set(value) {
-            _currentLanguage = value
+            if (_currentLanguageState == null) {
+                _currentLanguageState = mutableStateOf(value)
+            } else {
+                _currentLanguageState!!.value = value
+            }
             try {
                 settings.putString(KEY_LANGUAGE, value.code)
             } catch (e: Exception) {

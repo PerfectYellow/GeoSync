@@ -78,5 +78,16 @@ class AndroidConnectivityObserver(
 @Composable
 actual fun rememberConnectivityObserver(): ConnectivityObserver {
     val context = LocalContext.current
-    return remember(context) { AndroidConnectivityObserver(context) }
+    val isPreview = androidx.compose.ui.platform.LocalInspectionMode.current
+    
+    return remember(context, isPreview) {
+        if (isPreview) {
+            object : ConnectivityObserver {
+                override fun observe(): kotlinx.coroutines.flow.Flow<ConnectivityStatus> = 
+                    kotlinx.coroutines.flow.flowOf(ConnectivityStatus.Online)
+            }
+        } else {
+            AndroidConnectivityObserver(context)
+        }
+    }
 }

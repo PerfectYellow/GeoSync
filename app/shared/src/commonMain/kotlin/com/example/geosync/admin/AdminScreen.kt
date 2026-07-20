@@ -35,7 +35,8 @@ fun AdminScreen(
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onMapToggle: (Boolean) -> Unit = {}
 ) {
-    val viewModel: AdminViewModel = viewModel { AdminViewModel() }
+    val isPreview = LocalInspectionMode.current
+    val viewModel: AdminViewModel = viewModel { AdminViewModel(isPreview) }
     val isConnected by viewModel.isConnected.collectAsState()
     val trackedClientIds by viewModel.trackedClientIds.collectAsState()
     val locations by viewModel.locations.collectAsState()
@@ -113,7 +114,10 @@ fun AdminContent(
     val strings = LocalStrings.current
     
     val isInputValid = remember(clientIdInput) {
-        clientIdInput.isEmpty() || clientIdInput.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex())
+        val trimmed = clientIdInput.trim()
+        trimmed.isEmpty() || 
+        trimmed.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$".toRegex()) ||
+        (trimmed.startsWith("@") && trimmed.length >= 3)
     }
 
     Box(
