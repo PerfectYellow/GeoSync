@@ -1,5 +1,6 @@
 package com.example.geosync
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -11,6 +12,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -50,6 +53,7 @@ fun AppContent(selectedTab: Int, onTabSelected: (Int) -> Unit) {
                         .fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.navigationBars)
                         .padding(horizontal = 64.dp, vertical = 12.dp)
+                        .zIndex(100f) // Ensure it's above both layered screens
                 ) {
                     Surface(
                         shape = CircleShape,
@@ -88,12 +92,34 @@ fun AppContent(selectedTab: Int, onTabSelected: (Int) -> Unit) {
         Box(
             modifier = Modifier.fillMaxSize()
         ) {
-            when (selectedTab) {
-                0 -> AdminScreen(
-                    paddingValues = paddingValues,
-                    onMapToggle = { isMapExpanded = it }
-                )
-                1 -> ClientScreen(paddingValues = paddingValues)
+            // Layered screens to preserve native map state
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (selectedTab == 0) 1f else 0f)
+            ) {
+                // We wrap it in a child Box to disable interactions when inactive
+                if (selectedTab == 0) {
+                    AdminScreen(
+                        paddingValues = paddingValues,
+                        onMapToggle = { isMapExpanded = it }
+                    )
+                } else {
+                    // When not selected, we still keep the AdminScreen in the tree 
+                    // but we don't pass interactions. This preserves the MapView state.
+                    Box(Modifier.fillMaxSize()) {
+                        AdminScreen(
+                            paddingValues = paddingValues,
+                            onMapToggle = { isMapExpanded = it }
+                        )
+                        // Invisible overlay to block touches when in background
+                        Box(Modifier.fillMaxSize().clickable(enabled = false) {})
+                    }
+                }
+            }
+
+            if (selectedTab == 1) {
+                ClientScreen(paddingValues = paddingValues)
             }
             
             NotificationBanner()

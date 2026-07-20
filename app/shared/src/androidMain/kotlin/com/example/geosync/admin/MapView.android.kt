@@ -8,8 +8,11 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.util.Log
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -22,9 +25,13 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -107,7 +114,8 @@ actual fun GoogleMapView(
     onCameraChanged: (MapCameraState) -> Unit
 ) {
     // Trigger for programmatic zoom/position changes
-    var externalMoveTrigger by remember { mutableStateOf(0L) }
+    var externalMoveTrigger by remember { mutableLongStateOf(0L) }
+    var isMapReady by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     
     // Determine which engine to use for offline mode based on config and file availability
@@ -140,18 +148,19 @@ actual fun GoogleMapView(
     Box(modifier = modifier) {
         if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL || mapMode == MapMode.OPEN_STREET || useMapLibreForOffline) {
             MapLibreMapView(
-                modifier = Modifier,
+                modifier = Modifier.fillMaxSize(),
                 locations = locations,
                 mapMode = mapMode,
                 selectedClientId = selectedClientId,
                 focusTrigger = focusTrigger,
                 externalMoveTrigger = externalMoveTrigger,
                 cameraState = cameraState,
-                onCameraChanged = onCameraChanged
+                onCameraChanged = onCameraChanged,
+                onMapReady = { isMapReady = true }
             )
         } else {
             OsmdroidMapView(
-                modifier = Modifier,
+                modifier = Modifier.fillMaxSize(),
                 locations = locations,
                 mapMode = mapMode,
                 selectedClientId = selectedClientId,
@@ -160,8 +169,13 @@ actual fun GoogleMapView(
                 defaultLatitude = defaultLatitude,
                 defaultLongitude = defaultLongitude,
                 cameraState = cameraState,
-                onCameraChanged = onCameraChanged
+                onCameraChanged = onCameraChanged,
+                onMapReady = { isMapReady = true }
             )
+        }
+
+        if (!isMapReady) {
+            MapPlaceholder(Modifier.fillMaxSize())
         }
 
         // Zoom Controls
@@ -231,7 +245,8 @@ private fun MapLibreMapView(
     focusTrigger: Long,
     externalMoveTrigger: Long,
     cameraState: MapCameraState,
-    onCameraChanged: (MapCameraState) -> Unit
+    onCameraChanged: (MapCameraState) -> Unit,
+    onMapReady: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     
@@ -347,6 +362,7 @@ private fun MapLibreMapView(
     var lastExternalMoveTrigger by remember { mutableStateOf(0L) }
     var centeredClientIds by remember { mutableStateOf(setOf<String>()) }
     var currentStyleUrl by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     AndroidView(
         factory = { mapView },
@@ -360,6 +376,12 @@ private fun MapLibreMapView(
                             LatLng(cameraState.latitude, cameraState.longitude),
                             cameraState.zoom
                         ))
+                        // Add a small extra delay to ensure the surface has fully swapped
+                        // from the black background to the first rendered tiles.
+                        scope.launch {
+                            kotlinx.coroutines.delay(300)
+                            onMapReady()
+                        }
                     }
                     currentStyleUrl = styleUrl
                 }
@@ -412,7 +434,8 @@ private fun OsmdroidMapView(
     defaultLatitude: Double?,
     defaultLongitude: Double?,
     cameraState: MapCameraState,
-    onCameraChanged: (MapCameraState) -> Unit
+    onCameraChanged: (MapCameraState) -> Unit,
+    onMapReady: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     
@@ -421,6 +444,9 @@ private fun OsmdroidMapView(
         // Redundant setting here as a safety measure for tile downloader
         org.osmdroid.config.Configuration.getInstance().userAgentValue = context.packageName
         isInitialized.value = true
+        // Increased delay for Osmdroid to finish its first draw to avoid black flicker
+        kotlinx.coroutines.delay(1000)
+        onMapReady()
     }
 
     val mapFile: File? = remember(context) {
@@ -605,4 +631,56 @@ private fun createTextBitmap(context: android.content.Context, text: String, bgC
 
 private fun createTextDrawable(context: android.content.Context, text: String, bgColor: Int): BitmapDrawable {
     return BitmapDrawable(context.resources, createTextBitmap(context, text, bgColor))
+}
+
+@Composable
+fun MapPlaceholder(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "MapLoading")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "PulsatingAlpha"
+    )
+
+    val shimmerTranslate by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ShimmerTranslate"
+    )
+
+    val surfaceColor = MaterialTheme.colorScheme.surfaceVariant
+    val primaryColor = MaterialTheme.colorScheme.primary
+
+    Box(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surface) // Solid fallback background
+            .background(surfaceColor)
+            .background(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        primaryColor.copy(alpha = 0.05f),
+                        primaryColor.copy(alpha = 0.15f * alpha),
+                        primaryColor.copy(alpha = 0.05f)
+                    ),
+                    start = Offset(shimmerTranslate - 500f, shimmerTranslate - 500f),
+                    end = Offset(shimmerTranslate, shimmerTranslate)
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.MyLocation,
+            contentDescription = null,
+            modifier = Modifier.size(64.dp),
+            tint = primaryColor.copy(alpha = 0.2f * alpha)
+        )
+    }
 }
