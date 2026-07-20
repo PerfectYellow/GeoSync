@@ -6,3 +6,6 @@ interface LocationTracker {
 }
 
 expect fun getPlatformTracker(): LocationTracker
+
+expect fun isIgnoringBatteryOptimizations(): Boolean
+expect fun openBatteryOptimizationSettings()

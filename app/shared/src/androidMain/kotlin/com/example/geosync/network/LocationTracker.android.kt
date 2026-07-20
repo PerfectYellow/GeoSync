@@ -2,6 +2,8 @@ package com.example.geosync.network
 
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
+import android.provider.Settings
 
 class AndroidLocationTracker(private val context: Context) : LocationTracker {
     override fun startTracking(trackingId: String) {
@@ -26,3 +28,16 @@ var androidContext: Context
     set(value) { _androidContext = value }
 
 actual fun getPlatformTracker(): LocationTracker = AndroidLocationTracker(androidContext)
+
+actual fun isIgnoringBatteryOptimizations(): Boolean {
+    val context = _androidContext ?: return true
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+}
+
+actual fun openBatteryOptimizationSettings() {
+    val context = _androidContext ?: return
+    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
+}

@@ -9,3 +9,6 @@ class IosLocationTracker : LocationTracker {
 }
 
 actual fun getPlatformTracker(): LocationTracker = IosLocationTracker()
+
+actual fun isIgnoringBatteryOptimizations(): Boolean = true
+actual fun openBatteryOptimizationSettings() {}

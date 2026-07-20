@@ -6,3 +6,6 @@ class WasmLocationTracker : LocationTracker {
 }
 
 actual fun getPlatformTracker(): LocationTracker = WasmLocationTracker()
+
+actual fun isIgnoringBatteryOptimizations(): Boolean = true
+actual fun openBatteryOptimizationSettings() {}

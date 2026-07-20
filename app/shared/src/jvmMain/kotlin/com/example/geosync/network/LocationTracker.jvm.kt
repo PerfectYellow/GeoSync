@@ -6,3 +6,6 @@ class JvmLocationTracker : LocationTracker {
 }
 
 actual fun getPlatformTracker(): LocationTracker = JvmLocationTracker()
+
+actual fun isIgnoringBatteryOptimizations(): Boolean = true
+actual fun openBatteryOptimizationSettings() {}

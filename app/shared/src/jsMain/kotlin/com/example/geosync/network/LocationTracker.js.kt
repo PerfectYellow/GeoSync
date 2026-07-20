@@ -6,3 +6,6 @@ class JsLocationTracker : LocationTracker {
 }
 
 actual fun getPlatformTracker(): LocationTracker = JsLocationTracker()
+
+actual fun isIgnoringBatteryOptimizations(): Boolean = true
+actual fun openBatteryOptimizationSettings() {}

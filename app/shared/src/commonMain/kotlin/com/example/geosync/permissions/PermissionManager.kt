@@ -18,4 +18,5 @@ interface PermissionState {
 
 object PermissionNames {
     const val LOCATION = "location"
+    const val BACKGROUND_LOCATION = "background_location"
 }

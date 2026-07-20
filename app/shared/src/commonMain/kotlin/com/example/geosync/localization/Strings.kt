@@ -74,6 +74,10 @@ interface AppStrings {
     val mapOffline: String
     val offlineMapChangeError: String
     val adminSubscribed: (Int) -> String
+    val backgroundLocationRationale: String
+    val backgroundLocationWarning: String
+    val batteryOptimizationWarning: String
+    val fix: String
 }
 
 object EnStrings : AppStrings {
@@ -146,6 +150,10 @@ object EnStrings : AppStrings {
     override val mapOffline = "Offline"
     override val offlineMapChangeError = "You are offline and can't change map"
     override val adminSubscribed: (Int) -> String = { count -> if (count == 1) "1 admin is watching" else "$count admins are watching" }
+    override val backgroundLocationRationale = "For maximum reliability, please set location permission to 'Allow all the time'. This ensures tracking continues when you get a call or the screen is off."
+    override val backgroundLocationWarning = "Background tracking might be limited. 'Allow all the time' is recommended."
+    override val batteryOptimizationWarning = "Battery optimization is active. Tracking might be stopped by the system. Please disable it for this app."
+    override val fix = "Fix"
 }
 
 object FaStrings : AppStrings {
@@ -218,6 +226,10 @@ object FaStrings : AppStrings {
     override val mapOffline = "آفلاین"
     override val offlineMapChangeError = "شما آفلاین هستید و نمی‌توانید نقشه را تغییر دهید"
     override val adminSubscribed: (Int) -> String = { count -> if (count == 1) "۱ مدیر در حال مشاهده است" else "$count مدیر در حال مشاهده هستند" }
+    override val backgroundLocationRationale = "برای اطمینان حداکثری، لطفاً دسترسی به مکان را روی «همیشه اجازه داده شود» تنظیم کنید. این کار باعث می‌شود ردیابی هنگام تماس یا خاموش بودن صفحه ادامه یابد."
+    override val backgroundLocationWarning = "ردیابی در پس‌زمینه ممکن است محدود باشد. تنظیم «همیشه اجازه داده شود» توصیه می‌شود."
+    override val batteryOptimizationWarning = "بهینه‌سازی باتری فعال است. ممکن است سیستم ردیابی را متوقف کند. لطفاً آن را برای این برنامه غیرفعال کنید."
+    override val fix = "بررسی"
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {
@@ -226,7 +238,37 @@ enum class Language(val code: String, val label: String, val flag: String) {
 }
 
 object LocalizationManager {
-    private val settings: Settings = Settings()
+    private val settings: Settings by lazy {
+        try {
+            Settings()
+        } catch (e: Exception) {
+            object : Settings {
+                override val keys: Set<String> get() = emptySet()
+                override val size: Int get() = 0
+                override fun clear() {}
+                override fun remove(key: String) {}
+                override fun hasKey(key: String): Boolean = false
+                override fun putInt(key: String, value: Int) {}
+                override fun getInt(key: String, defaultValue: Int): Int = defaultValue
+                override fun putLong(key: String, value: Long) {}
+                override fun getLong(key: String, defaultValue: Long): Long = defaultValue
+                override fun putString(key: String, value: String) {}
+                override fun getString(key: String, defaultValue: String): String = defaultValue
+                override fun putFloat(key: String, value: Float) {}
+                override fun getFloat(key: String, defaultValue: Float): Float = defaultValue
+                override fun putDouble(key: String, value: Double) {}
+                override fun getDouble(key: String, defaultValue: Double): Double = defaultValue
+                override fun putBoolean(key: String, value: Boolean) {}
+                override fun getBoolean(key: String, defaultValue: Boolean): Boolean = defaultValue
+                override fun getIntOrNull(key: String): Int? = null
+                override fun getLongOrNull(key: String): Long? = null
+                override fun getStringOrNull(key: String): String? = null
+                override fun getFloatOrNull(key: String): Float? = null
+                override fun getDoubleOrNull(key: String): Double? = null
+                override fun getBooleanOrNull(key: String): Boolean? = null
+            }
+        }
+    }
     private const val KEY_LANGUAGE = "selected_language"
 
     private var _currentLanguage by mutableStateOf(loadLanguage())
@@ -234,7 +276,11 @@ object LocalizationManager {
         get() = _currentLanguage
         set(value) {
             _currentLanguage = value
-            settings.putString(KEY_LANGUAGE, value.code)
+            try {
+                settings.putString(KEY_LANGUAGE, value.code)
+            } catch (e: Exception) {
+                // Ignore errors in environments where settings might fail (like previews)
+            }
         }
     
     val strings: AppStrings
@@ -254,7 +300,11 @@ object LocalizationManager {
     }
 
     private fun loadLanguage(): Language {
-        val savedCode = settings.getString(KEY_LANGUAGE, Language.ENGLISH.code)
+        val savedCode = try {
+            settings.getString(KEY_LANGUAGE, Language.ENGLISH.code)
+        } catch (e: Exception) {
+            Language.ENGLISH.code
+        }
         return Language.entries.find { it.code == savedCode } ?: Language.ENGLISH
     }
 }

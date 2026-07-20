@@ -3,6 +3,7 @@ package com.example.geosync.network
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -12,6 +13,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.geosync.NotificationManager as GeoNotificationManager
 import com.example.geosync.NotificationType
@@ -30,6 +32,7 @@ class TrackingService : Service() {
     
     private lateinit var locationManager: LocationManager
     private var lastLocation: Location? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -66,6 +69,9 @@ class TrackingService : Service() {
         super.onCreate()
         createNotificationChannel()
         locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
+        
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GeoSync:TrackingWakeLock")
     }
 
     @SuppressLint("MissingPermission")
@@ -142,10 +148,12 @@ class TrackingService : Service() {
                 }
                 
                 startBroadcasting(trackingId)
+                wakeLock?.acquire(24 * 60 * 60 * 1000L /* 24 hours max */)
             }
             "STOP_TRACKING" -> {
                 stopBroadcasting()
                 locationManager.removeUpdates(locationListener)
+                if (wakeLock?.isHeld == true) wakeLock?.release()
                 stopSelf()
             }
         }
@@ -155,56 +163,58 @@ class TrackingService : Service() {
     private fun startBroadcasting(id: String) {
         trackingJob?.cancel()
         trackingJob = serviceScope.launch {
-            TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
             val strings = LocalizationManager.strings
-            try {
-                geoHttpClient.geoLiveWebSocket {
-                    TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
-                    GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
-                    sendSerialized(LiveLocationMessage(type = "client.register", clientId = id))
-                    
-                    // Listen for incoming messages (like subscriber updates)
-                    launch {
-                        try {
-                            while (isActive) {
-                                val event = receiveDeserialized<ServerEvent>()
-                                if (event.type == "client.subscribers") {
-                                    event.subscribersCount?.let { count ->
-                                        TrackingStatus.updateSubscribers(count)
+            while (isActive) {
+                try {
+                    TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
+                    geoHttpClient.geoLiveWebSocket {
+                        TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
+                        GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
+                        sendSerialized(LiveLocationMessage(type = "client.register", clientId = id))
+                        
+                        // Listen for incoming messages (like subscriber updates)
+                        val receiveJob = launch {
+                            try {
+                                while (isActive) {
+                                    val event = receiveDeserialized<ServerEvent>()
+                                    if (event.type == "client.subscribers") {
+                                        event.subscribersCount?.let { count ->
+                                            TrackingStatus.updateSubscribers(count)
+                                        }
                                     }
                                 }
+                            } catch (e: Exception) {
+                                // WebSocket closed or error
                             }
-                        } catch (e: Exception) {
-                            // WebSocket closed or error
                         }
-                    }
 
-                    while (isActive) {
-                        val location = lastLocation
-                        if (location != null) {
-                            println("GeoSync: Sending location from ${location.provider}: ${location.latitude}, ${location.longitude}")
-                            sendSerialized(LiveLocationMessage(
-                                type = "client.location",
-                                clientId = id,
-                                latitude = location.latitude,
-                                longitude = location.longitude,
-                                timestamp = Clock.System.now().toString()
-                            ))
-                        } else {
-                            GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
+                        while (isActive) {
+                            val location = lastLocation
+                            if (location != null) {
+                                println("GeoSync: Sending location from ${location.provider}: ${location.latitude}, ${location.longitude}")
+                                sendSerialized(LiveLocationMessage(
+                                    type = "client.location",
+                                    clientId = id,
+                                    latitude = location.latitude,
+                                    longitude = location.longitude,
+                                    timestamp = Clock.System.now().toString()
+                                ))
+                            } else {
+                                GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
+                            }
+                            delay(3000)
                         }
-                        delay(3000)
+                        receiveJob.cancel()
                     }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                val errorMsg = strings.connectionFailed(e.message)
-                TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
-                GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
-            } finally {
-                TrackingStatus.updateSubscribers(0)
-                if (TrackingStatus.status.value == ConnectionStatus.CONNECTED) {
-                    TrackingStatus.updateStatus(ConnectionStatus.IDLE)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    val errorMsg = strings.connectionFailed(e.message)
+                    TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
+                    GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
+                    // Wait before retrying to connect
+                    delay(5000)
+                } finally {
+                    TrackingStatus.updateSubscribers(0)
                 }
             }
         }
@@ -229,11 +239,19 @@ class TrackingService : Service() {
     private fun createNotification(content: String): Notification {
         val manager = getSystemService(android.app.NotificationManager::class.java)
         val strings = LocalizationManager.strings
+        
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent, 
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(strings.geoSyncTrackingTitle)
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
+            .setContentIntent(pendingIntent)
             .build()
         
         // Update existing notification if it's already showing
@@ -246,5 +264,6 @@ class TrackingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        if (wakeLock?.isHeld == true) wakeLock?.release()
     }
 }

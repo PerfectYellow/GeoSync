@@ -32,6 +32,8 @@ import com.example.geosync.permissions.rememberPermissionState
 import com.example.geosync.network.ConnectionStatus
 import com.example.geosync.network.ConnectivityStatus
 import com.example.geosync.network.rememberConnectivityObserver
+import com.example.geosync.network.isIgnoringBatteryOptimizations
+import com.example.geosync.network.openBatteryOptimizationSettings
 import com.example.geosync.LanguageSelector
 import com.example.geosync.NotificationBanner
 import com.example.geosync.NotificationManager
@@ -49,7 +51,25 @@ fun ClientScreen(
     val connectivityObserver = rememberConnectivityObserver()
     val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
 
+    val backgroundLocationPermissionState = rememberPermissionState(
+        permission = PermissionNames.BACKGROUND_LOCATION,
+        onResult = {}
+    )
+
+    var isBatteryOptimized by remember { mutableStateOf(!isIgnoringBatteryOptimizations()) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isBatteryOptimized = !isIgnoringBatteryOptimizations()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     var showPermissionRationale by remember { mutableStateOf(false) }
+    var showBackgroundRationale by remember { mutableStateOf(false) }
 
     val locationPermissionState = rememberPermissionState(
         permission = PermissionNames.LOCATION,
@@ -70,6 +90,8 @@ fun ClientScreen(
             connectionStatus = connectionStatus,
             connectionError = connectionError,
             subscribersCount = subscribersCount,
+            hasBackgroundPermission = backgroundLocationPermissionState.hasPermission,
+            isBatteryOptimized = isBatteryOptimized,
             onToggleTracking = {
                 if (networkStatus == ConnectivityStatus.Offline) {
                     NotificationManager.showOffline()
@@ -78,6 +100,12 @@ fun ClientScreen(
                 } else {
                     showPermissionRationale = true
                 }
+            },
+            onRequestBackgroundPermission = {
+                showBackgroundRationale = true
+            },
+            onFixBatteryOptimization = {
+                openBatteryOptimizationSettings()
             },
             paddingValues = paddingValues
         )
@@ -94,6 +122,29 @@ fun ClientScreen(
                     showPermissionRationale = false
                     locationPermissionState.openSettings()
                 }
+            )
+        }
+
+        if (showBackgroundRationale) {
+            val strings = LocalStrings.current
+            AlertDialog(
+                onDismissRequest = { showBackgroundRationale = false },
+                title = { Text(strings.locationAccessRequired, fontWeight = FontWeight.Bold) },
+                text = { Text(strings.backgroundLocationRationale) },
+                confirmButton = {
+                    Button(onClick = {
+                        showBackgroundRationale = false
+                        backgroundLocationPermissionState.launchPermissionRequest()
+                    }) {
+                        Text(strings.grantPermission)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBackgroundRationale = false }) {
+                        Text(strings.cancel)
+                    }
+                },
+                shape = RoundedCornerShape(24.dp)
             )
         }
         
@@ -160,7 +211,11 @@ fun ClientScreenContent(
     connectionStatus: ConnectionStatus,
     connectionError: String?,
     subscribersCount: Int = 0,
+    hasBackgroundPermission: Boolean = true,
+    isBatteryOptimized: Boolean = false,
     onToggleTracking: () -> Unit,
+    onRequestBackgroundPermission: () -> Unit = {},
+    onFixBatteryOptimization: () -> Unit = {},
     paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -188,15 +243,40 @@ fun ClientScreenContent(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
-                LanguageSelector()
+                // LanguageSelector()
             }
 
             Text(
                 text = strings.locationSynchronization,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.padding(bottom = 24.dp)
+                modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            // Warnings for background tracking
+            if (!hasBackgroundPermission || isBatteryOptimized) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!hasBackgroundPermission) {
+                        WarningItem(
+                            icon = Icons.Default.Warning,
+                            message = strings.backgroundLocationWarning,
+                            onFix = onRequestBackgroundPermission
+                        )
+                    }
+                    if (isBatteryOptimized) {
+                        WarningItem(
+                            icon = Icons.Default.BatteryAlert,
+                            message = strings.batteryOptimizationWarning,
+                            onFix = onFixBatteryOptimization
+                        )
+                    }
+                }
+            }
         }
 
         Box(
@@ -263,6 +343,53 @@ fun ClientScreenContent(
                     text = strings.dataVisibilityInfo,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WarningItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    message: String,
+    onFix: () -> Unit
+) {
+    val strings = LocalStrings.current
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.1f))
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(
+                onClick = onFix,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.height(32.dp),
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text(
+                    text = strings.fix,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -464,7 +591,31 @@ fun ClientScreenPreview() {
                 connectionStatus = ConnectionStatus.IDLE,
                 connectionError = null,
                 subscribersCount = 0,
-                onToggleTracking = {}
+                hasBackgroundPermission = true,
+                isBatteryOptimized = false,
+                onToggleTracking = {},
+                onRequestBackgroundPermission = {},
+                onFixBatteryOptimization = {}
+            )
+        }
+    }
+}
+
+@Preview
+@Composable
+fun ClientScreenWarningsPreview() {
+    MaterialTheme {
+        Surface(color = MaterialTheme.colorScheme.background) {
+            ClientScreenContent(
+                trackingId = "123e4567-e89b-12d3-a456-426614174000",
+                connectionStatus = ConnectionStatus.IDLE,
+                connectionError = null,
+                subscribersCount = 0,
+                hasBackgroundPermission = false,
+                isBatteryOptimized = true,
+                onToggleTracking = {},
+                onRequestBackgroundPermission = {},
+                onFixBatteryOptimization = {}
             )
         }
     }
@@ -479,8 +630,12 @@ fun ClientScreenTrackingPreview() {
                 trackingId = "123e4567-e89b-12d3-a456-426614174000",
                 connectionStatus = ConnectionStatus.CONNECTED,
                 connectionError = null,
-                subscribersCount = 1,
-                onToggleTracking = {}
+                subscribersCount = 2,
+                hasBackgroundPermission = true,
+                isBatteryOptimized = false,
+                onToggleTracking = {},
+                onRequestBackgroundPermission = {},
+                onFixBatteryOptimization = {}
             )
         }
     }
@@ -494,9 +649,13 @@ fun ClientScreenErrorPreview() {
             ClientScreenContent(
                 trackingId = "",
                 connectionStatus = ConnectionStatus.FAILED,
-                connectionError = "Connection refused: Server is unreachable",
+                connectionError = "Connection refused: Server unreachable",
                 subscribersCount = 0,
-                onToggleTracking = {}
+                hasBackgroundPermission = true,
+                isBatteryOptimized = false,
+                onToggleTracking = {},
+                onRequestBackgroundPermission = {},
+                onFixBatteryOptimization = {}
             )
         }
     }
