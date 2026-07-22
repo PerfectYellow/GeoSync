@@ -29,7 +29,9 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     val trackedClientIds: StateFlow<Set<String>> = _trackedClientIds.asStateFlow()
 
     private val _locations = MutableStateFlow<Map<String, StoredLocation>>(emptyMap())
-    val locations: StateFlow<Map<String, StoredLocation>> = _locations.asStateFlow()
+    val locations: StateFlow<Map<String, StoredLocation>> = combine(_locations, _trackedClientIds) { locs, ids ->
+        locs.filterKeys { it in ids }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     private val _mapMode = MutableStateFlow(MapMode.OPEN_STREET)
     val mapMode: StateFlow<MapMode> = _mapMode.asStateFlow()
@@ -72,8 +74,8 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         }
         
         _mapMode.value = mode
-        if (mode == MapMode.OFFLINE) {
-            // Force re-center to Tehran when switching to offline - Keep original zoom for offline
+        if (mode == MapMode.OFFLINE || mode == MapMode.INTERNAL) {
+            // Force re-center to Tehran when switching to internal or offline data sources
             _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
         }
         
@@ -148,7 +150,9 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                                 "location.update" -> {
                                     event.location?.let { loc ->
                                         val normalizedLoc = loc.copy(clientId = loc.clientId.lowercase())
-                                        _locations.update { it + (normalizedLoc.clientId to normalizedLoc) }
+                                        if (_trackedClientIds.value.contains(normalizedLoc.clientId)) {
+                                            _locations.update { it + (normalizedLoc.clientId to normalizedLoc) }
+                                        }
                                     }
                                 }
                                 "admin.subscribed" -> {

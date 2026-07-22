@@ -120,6 +120,10 @@ fun AdminContent(
         (trimmed.startsWith("@") && trimmed.length >= 3)
     }
 
+    val filteredLocations = remember(locations, trackedClientIds) {
+        locations.filterKeys { it in trackedClientIds }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -127,7 +131,7 @@ fun AdminContent(
     ) {
         // 1. Map in the background
         MapPreview(
-            locations = locations,
+            locations = filteredLocations,
             mapMode = mapMode,
             selectedClientId = selectedClientId,
             focusTrigger = focusTrigger,

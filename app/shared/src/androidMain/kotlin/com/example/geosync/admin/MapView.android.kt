@@ -54,6 +54,8 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.MapLibre
+import org.maplibre.android.maps.MapLibreMapOptions
 import java.io.File
 import java.io.FileOutputStream
 
@@ -321,7 +323,14 @@ private fun MapLibreMapView(
     }
 
     val mapView = remember {
-        org.maplibre.android.maps.MapView(context).apply {
+        val options = MapLibreMapOptions.createFromAttributes(context, null)
+            .localIdeographFontFamily("sans-serif")
+
+        org.maplibre.android.maps.MapView(context, options).apply {
+            addOnDidFailLoadingMapListener { errorMessage ->
+                Log.e("MapView", "MapLibre: Map load failure: $errorMessage")
+            }
+
             getMapAsync { map ->
                 map.uiSettings.isAttributionEnabled = false
                 map.uiSettings.isLogoEnabled = false
@@ -371,7 +380,9 @@ private fun MapLibreMapView(
             view.getMapAsync { map ->
                 // Apply style if changed
                 if (currentStyleUrl != styleUrl) {
-                    map.setStyle(styleUrl) {
+                    Log.d("MapView", "MapLibre: Attempting to load style from: $styleUrl")
+                    map.setStyle(styleUrl) { style ->
+                        Log.d("MapView", "MapLibre: Style loaded successfully. URL: $styleUrl")
                         map.moveCamera(CameraUpdateFactory.newLatLngZoom(
                             LatLng(cameraState.latitude, cameraState.longitude),
                             cameraState.zoom
