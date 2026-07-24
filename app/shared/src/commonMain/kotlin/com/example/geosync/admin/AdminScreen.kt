@@ -112,6 +112,20 @@ fun AdminContent(
     var selectedClientId by remember { mutableStateOf<String?>(null) }
     var focusTrigger by remember { mutableStateOf(0L) }
     val strings = LocalStrings.current
+
+    // Auto-focus on map mode change if clients exist
+    LaunchedEffect(mapMode) {
+        if (trackedClientIds.isNotEmpty()) {
+            // Find the last client in the list that actually has a location
+            val targetId = trackedClientIds.reversed().firstOrNull { id -> locations.containsKey(id) }
+                ?: trackedClientIds.lastOrNull() // Fallback to last added client even if no location yet (will center when location arrives)
+
+            if (targetId != null) {
+                selectedClientId = targetId
+                focusTrigger++
+            }
+        }
+    }
     
     val isInputValid = remember(clientIdInput) {
         val trimmed = clientIdInput.trim()

@@ -2,6 +2,7 @@ package com.example.geosync.client
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +29,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.geosync.localization.LocalStrings
 import com.example.geosync.permissions.PermissionNames
 import com.example.geosync.permissions.rememberPermissionState
@@ -39,6 +44,8 @@ import com.example.geosync.network.openBatteryOptimizationSettings
 import com.example.geosync.LanguageSelector
 import com.example.geosync.NotificationBanner
 import com.example.geosync.NotificationManager
+import com.example.geosync.SettingsManager
+import com.example.geosync.getPlatform
 
 @Composable
 fun ClientScreen(
@@ -61,10 +68,10 @@ fun ClientScreen(
     )
 
     var isBatteryOptimized by remember { mutableStateOf(!isIgnoringBatteryOptimizations()) }
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
                 isBatteryOptimized = !isIgnoringBatteryOptimizations()
             }
         }
@@ -74,6 +81,8 @@ fun ClientScreen(
 
     var showPermissionRationale by remember { mutableStateOf(false) }
     var showBackgroundRationale by remember { mutableStateOf(false) }
+    var showDeviceDetails by remember { mutableStateOf(false) }
+    var showConnectionTypePicker by remember { mutableStateOf(false) }
 
     val locationPermissionState = rememberPermissionState(
         permission = PermissionNames.LOCATION,
@@ -113,8 +122,26 @@ fun ClientScreen(
             onFixBatteryOptimization = {
                 openBatteryOptimizationSettings()
             },
+            onShowDeviceDetails = { showDeviceDetails = true },
+            onShowConnectionType = { showConnectionTypePicker = true },
             paddingValues = paddingValues
         )
+
+        if (showDeviceDetails) {
+            DeviceDetailsDialog(onDismiss = { showDeviceDetails = false })
+        }
+
+        if (showConnectionTypePicker) {
+            ConnectionTypeDialog(
+                onDismiss = { showConnectionTypePicker = false },
+                onSet = { selectedType ->
+                    SettingsManager.connectionType = selectedType
+                    showConnectionTypePicker = false
+                    // The user said they will set functionality, 
+                    // but we still need to save the setting so the UI reflects it.
+                }
+            )
+        }
 
         if (showPermissionRationale) {
             PermissionDialog(
@@ -212,6 +239,212 @@ fun PermissionDialog(
 }
 
 @Composable
+fun ConnectionTypeDialog(
+    onDismiss: () -> Unit,
+    onSet: (SettingsManager.ConnectionType) -> Unit
+) {
+    val strings = LocalStrings.current
+    var selectedType by remember { mutableStateOf(SettingsManager.connectionType) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SettingsEthernet,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = strings.connectionType,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                SettingsManager.ConnectionType.entries.forEach { type ->
+                    val isSelected = type == selectedType
+                    val backgroundColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        else MaterialTheme.colorScheme.surface
+                    )
+                    val borderColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+
+                    Surface(
+                        onClick = { selectedType = type },
+                        shape = RoundedCornerShape(16.dp),
+                        color = backgroundColor,
+                        border = BorderStroke(1.dp, borderColor),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary 
+                                        else MaterialTheme.colorScheme.surfaceVariant,
+                                        CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (type == SettingsManager.ConnectionType.WEBSOCKET) 
+                                        Icons.Default.SyncAlt else Icons.Default.Http,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary 
+                                           else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(16.dp))
+                            
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = when (type) {
+                                        SettingsManager.ConnectionType.WEBSOCKET -> strings.websocket
+                                        SettingsManager.ConnectionType.REST -> strings.rest
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary 
+                                            else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSet(selectedType) },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(48.dp).fillMaxWidth(0.45f)
+            ) {
+                Text(strings.set, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(48.dp).fillMaxWidth(0.45f)
+            ) {
+                Text(strings.close)
+            }
+        },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp
+    )
+}
+
+@Composable
+fun DeviceDetailsDialog(onDismiss: () -> Unit) {
+    val strings = LocalStrings.current
+    val clipboardManager = LocalClipboardManager.current
+    val deviceUuid = SettingsManager.deviceUuid
+    val platform = getPlatform().name
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = strings.deviceInfo,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column {
+                    Text(
+                        text = strings.deviceUuid,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .clickable { clipboardManager.setText(AnnotatedString(deviceUuid)) }
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            text = deviceUuid,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = strings.copy,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text(
+                            text = strings.platform,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(text = platform, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = strings.appVersion,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(text = "1.0.0", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.dismiss)
+            }
+        },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surface
+    )
+}
+
+@Composable
 fun ClientScreenContent(
     trackingId: String,
     connectionStatus: ConnectionStatus,
@@ -224,6 +457,8 @@ fun ClientScreenContent(
     onUpdateCustomId: (String) -> Unit = {},
     onRequestBackgroundPermission: () -> Unit = {},
     onFixBatteryOptimization: () -> Unit = {},
+    onShowDeviceDetails: () -> Unit = {},
+    onShowConnectionType: () -> Unit = {},
     paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -235,7 +470,8 @@ fun ClientScreenContent(
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.statusBars)
             .padding(paddingValues)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .padding(
+                top = 0.dp, bottom = 16.dp, start = 24.dp, end = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Descriptive Header
@@ -251,7 +487,40 @@ fun ClientScreenContent(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
+
                 LanguageSelector()
+
+                var showOptionsMenu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { showOptionsMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "More Options",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showOptionsMenu,
+                        onDismissRequest = { showOptionsMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(strings.connectionType) },
+                            leadingIcon = { Icon(Icons.Default.SettingsEthernet, contentDescription = null) },
+                            onClick = {
+                                showOptionsMenu = false
+                                onShowConnectionType()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.deviceInfo) },
+                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                            onClick = {
+                                showOptionsMenu = false
+                                onShowDeviceDetails()
+                            }
+                        )
+                    }
+                }
             }
 
             Text(
@@ -335,7 +604,7 @@ fun ClientScreenContent(
 
 @Composable
 private fun WarningItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     message: String,
     onFix: () -> Unit
 ) {
@@ -344,7 +613,7 @@ private fun WarningItem(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
         shape = RoundedCornerShape(12.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.1f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.1f))
     ) {
         Row(
             modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),

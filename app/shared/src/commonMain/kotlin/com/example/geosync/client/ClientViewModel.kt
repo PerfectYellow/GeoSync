@@ -20,7 +20,7 @@ class ClientViewModel(private val isPreview: Boolean = false) : ViewModel() {
     val connectionError = TrackingStatus.errorMessage
     val subscribersCount = TrackingStatus.subscribersCount
 
-    private val _trackingId = MutableStateFlow(SettingsManager.customId ?: generateUuid())
+    private val _trackingId = MutableStateFlow(SettingsManager.customId ?: SettingsManager.deviceUuid)
     val trackingId: StateFlow<String> = _trackingId.asStateFlow()
 
     init {
@@ -53,7 +53,7 @@ class ClientViewModel(private val isPreview: Boolean = false) : ViewModel() {
             stopTracking()
         }
         SettingsManager.customId = null
-        _trackingId.value = generateUuid()
+        _trackingId.value = SettingsManager.generateUuid()
     }
 
     fun updateCustomId(id: String) {
@@ -76,11 +76,5 @@ class ClientViewModel(private val isPreview: Boolean = false) : ViewModel() {
         tracker.stopTracking()
         TrackingStatus.updateStatus(ConnectionStatus.IDLE)
         NotificationManager.show(LocalizationManager.strings.trackingStopped, NotificationType.INFO)
-    }
-
-    private fun generateUuid(): String {
-        val chars = "0123456789abcdef"
-        val id = (1..32).map { chars[Random.nextInt(chars.length)] }.joinToString("")
-        return "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}"
     }
 }

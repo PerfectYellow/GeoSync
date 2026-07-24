@@ -2,7 +2,9 @@ package com.example.geosync.admin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.geosync.*
+import com.example.geosync.NotificationManager
+import com.example.geosync.NotificationType
+import com.example.geosync.SettingsManager
 import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.network.*
 import io.ktor.client.plugins.websocket.*
@@ -25,7 +27,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
-    private val _trackedClientIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _trackedClientIds = MutableStateFlow<Set<String>>(SettingsManager.trackedClientIds)
     val trackedClientIds: StateFlow<Set<String>> = _trackedClientIds.asStateFlow()
 
     private val _locations = MutableStateFlow<Map<String, StoredLocation>>(emptyMap())
@@ -59,6 +61,13 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     init {
         if (!isPreview) {
             connect()
+            
+            // Persist tracked clients whenever they change
+            viewModelScope.launch {
+                _trackedClientIds.collect { ids ->
+                    SettingsManager.trackedClientIds = ids
+                }
+            }
         }
     }
 
@@ -74,8 +83,8 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         }
         
         _mapMode.value = mode
-        if (mode == MapMode.OFFLINE || mode == MapMode.INTERNAL) {
-            // Force re-center to Tehran when switching to internal or offline data sources
+        if ((mode == MapMode.OFFLINE || mode == MapMode.INTERNAL) && _trackedClientIds.value.isEmpty()) {
+            // Only force re-center to Tehran if no clients are being tracked
             _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
         }
         
@@ -87,14 +96,12 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     fun handleNetworkChange(isOffline: Boolean) {
         if (isOffline) {
             if (_mapMode.value != MapMode.OFFLINE) {
-                _mapMode.value = MapMode.OFFLINE
-                // Force re-center to Tehran when switching to offline due to connection loss
-                _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
+                setMapMode(MapMode.OFFLINE, true)
             }
         } else {
             // Return to previous online mode if it was swapped to OFFLINE due to connection loss
             if (_mapMode.value == MapMode.OFFLINE) {
-                _mapMode.value = lastOnlineMode
+                setMapMode(lastOnlineMode, false)
             }
         }
     }

@@ -84,6 +84,16 @@ interface AppStrings {
     val invalidCustomId: String
     val save: String
     val usernamePlaceholder: String
+    val deviceInfo: String
+    val deviceUuid: String
+    val platform: String
+    val appVersion: String
+    val copy: String
+    val connectionType: String
+    val websocket: String
+    val rest: String
+    val set: String
+    val close: String
 }
 
 object EnStrings : AppStrings {
@@ -166,6 +176,16 @@ object EnStrings : AppStrings {
     override val invalidCustomId = "Custom ID must start with @ and have at least 3 characters"
     override val save = "Save"
     override val usernamePlaceholder = "username"
+    override val deviceInfo = "Device Information"
+    override val deviceUuid = "Device UUID"
+    override val platform = "Platform"
+    override val appVersion = "App Version"
+    override val copy = "Copy"
+    override val connectionType = "Connection Type"
+    override val websocket = "Web Socket"
+    override val rest = "REST"
+    override val set = "Set"
+    override val close = "Close"
 }
 
 object FaStrings : AppStrings {
@@ -248,6 +268,16 @@ object FaStrings : AppStrings {
     override val invalidCustomId = "شناسه دلخواه باید با @ شروع شود و حداقل ۳ کاراکتر باشد"
     override val save = "ذخیره"
     override val usernamePlaceholder = "نام کاربری"
+    override val deviceInfo = "اطلاعات دستگاه"
+    override val deviceUuid = "شناسه دستگاه"
+    override val platform = "پلتفرم"
+    override val appVersion = "نسخه برنامه"
+    override val copy = "کپی"
+    override val connectionType = "نوع اتصال"
+    override val websocket = "وب سوکت"
+    override val rest = "REST"
+    override val set = "تنظیم"
+    override val close = "بستن"
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {

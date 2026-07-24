@@ -39,6 +39,38 @@ object SettingsManager {
     }
 
     private const val KEY_CUSTOM_ID = "custom_tracking_id"
+    private const val KEY_TRACKED_CLIENT_IDS = "tracked_client_ids"
+    private const val KEY_DEVICE_UUID = "device_persistent_uuid"
+    private const val KEY_CONNECTION_TYPE = "connection_type"
+
+    enum class ConnectionType {
+        WEBSOCKET, REST
+    }
+
+    var connectionType: ConnectionType
+        get() = try {
+            ConnectionType.valueOf(settings.getString(KEY_CONNECTION_TYPE, ConnectionType.WEBSOCKET.name))
+        } catch (e: Exception) {
+            ConnectionType.WEBSOCKET
+        }
+        set(value) {
+            settings.putString(KEY_CONNECTION_TYPE, value.name)
+        }
+
+    val deviceUuid: String
+        get() {
+            val saved = settings.getStringOrNull(KEY_DEVICE_UUID)
+            if (saved != null) return saved
+            val newUuid = generateUuid()
+            settings.putString(KEY_DEVICE_UUID, newUuid)
+            return newUuid
+        }
+
+    fun generateUuid(): String {
+        val chars = "0123456789abcdef"
+        val id = (1..32).map { chars[(0 until chars.length).random()] }.joinToString("")
+        return "${id.substring(0, 8)}-${id.substring(8, 12)}-${id.substring(12, 16)}-${id.substring(16, 20)}-${id.substring(20)}"
+    }
 
     var customId: String?
         get() = settings.getStringOrNull(KEY_CUSTOM_ID)
@@ -47,6 +79,19 @@ object SettingsManager {
                 settings.remove(KEY_CUSTOM_ID)
             } else {
                 settings.putString(KEY_CUSTOM_ID, value)
+            }
+        }
+
+    var trackedClientIds: Set<String>
+        get() = settings.getStringOrNull(KEY_TRACKED_CLIENT_IDS)
+            ?.split(",")
+            ?.filter { it.isNotBlank() }
+            ?.toSet() ?: emptySet()
+        set(value) {
+            if (value.isEmpty()) {
+                settings.remove(KEY_TRACKED_CLIENT_IDS)
+            } else {
+                settings.putString(KEY_TRACKED_CLIENT_IDS, value.joinToString(","))
             }
         }
 }

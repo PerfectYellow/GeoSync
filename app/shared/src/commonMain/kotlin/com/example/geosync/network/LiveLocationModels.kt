@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class LiveLocationMessage(
     val type: String,
     val clientId: String? = null,
+    val deviceUuid: String? = null,
     val clientIds: List<String>? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,

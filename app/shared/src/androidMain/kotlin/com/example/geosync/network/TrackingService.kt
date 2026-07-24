@@ -17,6 +17,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.geosync.NotificationManager as GeoNotificationManager
 import com.example.geosync.NotificationType
+import com.example.geosync.SettingsManager
 import com.example.geosync.localization.LocalizationManager
 import com.example.geosync.network.LiveLocationMessage
 import com.example.geosync.network.geoHttpClient
@@ -170,7 +171,11 @@ class TrackingService : Service() {
                     geoHttpClient.geoLiveWebSocket {
                         TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
                         GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
-                        sendSerialized(LiveLocationMessage(type = "client.register", clientId = id))
+                        sendSerialized(LiveLocationMessage(
+                            type = "client.register", 
+                            clientId = id,
+                            deviceUuid = SettingsManager.deviceUuid
+                        ))
                         
                         // Listen for incoming messages (like subscriber updates)
                         val receiveJob = launch {
