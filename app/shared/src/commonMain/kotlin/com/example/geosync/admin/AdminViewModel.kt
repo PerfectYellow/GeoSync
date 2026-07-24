@@ -50,6 +50,12 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _cameraState = MutableStateFlow(MapCameraState(35.6994, 51.3377, 11.0))
     val cameraState: StateFlow<MapCameraState> = _cameraState.asStateFlow()
 
+    private val _historyState = MutableStateFlow<Map<String, List<TrackingSessionHistory>>>(emptyMap())
+    val historyState: StateFlow<Map<String, List<TrackingSessionHistory>>> = _historyState.asStateFlow()
+
+    private val _isHistoryLoading = MutableStateFlow(false)
+    val isHistoryLoading: StateFlow<Boolean> = _isHistoryLoading.asStateFlow()
+
     private var lastOnlineMode = MapMode.OPEN_STREET
 
     private var connectionJob: Job? = null
@@ -236,6 +242,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     }
 
     fun removeClient(rawClientId: String) {
+        // ... (existing logic)
         val clientId = rawClientId.lowercase()
         val strings = LocalizationManager.strings
         _trackedClientIds.update { it - clientId }
@@ -250,6 +257,20 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                 NotificationManager.show(strings.removedClient(clientId), NotificationType.INFO)
             } catch (e: Exception) {
                 NotificationManager.show(strings.failedToUnsubscribe(e.message), NotificationType.ERROR)
+            }
+        }
+    }
+
+    fun loadHistory(clientId: String) {
+        viewModelScope.launch {
+            _isHistoryLoading.value = true
+            try {
+                val history = client.fetchClientHistory(clientId)
+                _historyState.update { it + (clientId to history) }
+            } catch (e: Exception) {
+                println("❌ Failed to load history for $clientId: ${e.message}")
+            } finally {
+                _isHistoryLoading.value = false
             }
         }
     }

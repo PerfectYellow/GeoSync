@@ -94,6 +94,14 @@ interface AppStrings {
     val rest: String
     val set: String
     val close: String
+    val confirmRemoval: String
+    val removeClientMessage: String
+    val viewHistory: String
+    val trackingHistory: String
+    val distanceTraveled: String
+    val sessionStart: String
+    val sessionEnd: String
+    val noHistoryFound: String
 }
 
 object EnStrings : AppStrings {
@@ -186,6 +194,14 @@ object EnStrings : AppStrings {
     override val rest = "REST"
     override val set = "Set"
     override val close = "Close"
+    override val confirmRemoval = "Confirm Removal"
+    override val removeClientMessage = "Are you sure you want to stop tracking this client?"
+    override val viewHistory = "View History"
+    override val trackingHistory = "Tracking History"
+    override val distanceTraveled = "Distance Traveled"
+    override val sessionStart = "Start"
+    override val sessionEnd = "End"
+    override val noHistoryFound = "No history found for this client"
 }
 
 object FaStrings : AppStrings {
@@ -278,6 +294,14 @@ object FaStrings : AppStrings {
     override val rest = "REST"
     override val set = "تنظیم"
     override val close = "بستن"
+    override val confirmRemoval = "تأیید حذف"
+    override val removeClientMessage = "آیا مطمئن هستید که می‌خواهید ردیابی این کاربر را متوقف کنید؟ تمام داده‌های زنده این نشست از پورتال پاک خواهد شد."
+    override val viewHistory = "مشاهده تاریخچه"
+    override val trackingHistory = "تاریخچه ردیابی"
+    override val distanceTraveled = "مسافت طی شده"
+    override val sessionStart = "شروع"
+    override val sessionEnd = "پایان"
+    override val noHistoryFound = "تاریخچه‌ای برای این کاربر یافت نشد"
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {

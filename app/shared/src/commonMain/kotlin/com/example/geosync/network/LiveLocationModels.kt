@@ -33,3 +33,23 @@ data class StoredLocation(
     val receivedAt: String? = null,
     val isOnline: Boolean = true
 )
+
+@Serializable
+data class TrackingSessionHistory(
+    val id: String? = null,
+    val clientId: String? = null,
+    val sessionTag: String? = null,
+    val totalDistanceKm: Double = 0.0,
+    val startTime: String? = null,
+    val endTime: String? = null,
+    val points: List<HistoryPoint> = emptyList()
+)
+
+@Serializable
+data class HistoryPoint(
+    val id: String? = null,
+    val latitude: Double,
+    val longitude: Double,
+    val timestamp: String? = null,
+    val receivedAt: String? = null
+)

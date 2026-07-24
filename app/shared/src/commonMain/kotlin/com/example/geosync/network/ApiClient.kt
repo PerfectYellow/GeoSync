@@ -1,8 +1,12 @@
 package com.example.geosync.network
 
 import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.plugins.websocket.*
+import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.*
+import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
 
 object ApiConfig {
@@ -29,6 +33,7 @@ object ApiConfig {
     val isSecure: Boolean = PORT == 443
 
     const val WS_LIVE_PATH = "/v1/live"
+    const val HISTORY_PATH = "/v1/history"
 }
 
 val geoHttpClient = HttpClient {
@@ -37,6 +42,20 @@ val geoHttpClient = HttpClient {
             ignoreUnknownKeys = true
         })
     }
+    install(ContentNegotiation) {
+        json(Json {
+            ignoreUnknownKeys = true
+        })
+    }
+}
+
+/**
+ * Helper to fetch client history from the GeoSync server.
+ */
+suspend fun HttpClient.fetchClientHistory(clientId: String): List<TrackingSessionHistory> {
+    val scheme = if (ApiConfig.isSecure) "https" else "http"
+    val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}${ApiConfig.HISTORY_PATH}/$clientId"
+    return get(url).body()
 }
 
 /**
