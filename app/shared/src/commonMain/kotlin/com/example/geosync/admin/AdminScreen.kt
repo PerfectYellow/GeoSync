@@ -1,6 +1,8 @@
 package com.example.geosync.admin
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
+import kotlinx.coroutines.launch
 import com.example.geosync.NotificationManager
 import com.example.geosync.LanguageSelector
 import com.example.geosync.localization.LocalStrings
@@ -768,70 +771,101 @@ fun HistoryBottomSheet(
         tonalElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 32.dp)
-        ) {
-            // Modern Accurate Progress Indicator
-            if (isLoading) {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .padding(horizontal = 24.dp)
-                        .clip(CircleShape),
-                    color = indicatorPurple,
-                    trackColor = indicatorPurple.copy(alpha = 0.1f)
+        val coroutineScope = rememberCoroutineScope()
+        val showButton by remember {
+            derivedStateOf { listState.firstVisibleItemIndex > 0 }
+        }
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 32.dp)
+            ) {
+                // Modern Accurate Progress Indicator
+                if (isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .padding(horizontal = 24.dp)
+                            .clip(CircleShape),
+                        color = indicatorPurple,
+                        trackColor = indicatorPurple.copy(alpha = 0.1f)
+                    )
+                } else {
+                    Spacer(Modifier.height(3.dp))
+                }
+
+                Text(
+                    text = if (history.isNotEmpty()) "${strings.trackingHistory} (${history.size})" else strings.trackingHistory,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
                 )
-            } else {
-                Spacer(Modifier.height(3.dp))
+
+                Text(
+                    text = clientId,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = indicatorPurple,
+                    modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 16.dp)
+                )
+
+                if (isLoading && history.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = indicatorPurple)
+                    }
+                } else if (history.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(strings.noHistoryFound, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScrollbar(listState, indicatorPurple),
+                        contentPadding = PaddingValues(horizontal = 16.dp)
+                    ) {
+                        itemsIndexed(history) { index, session ->
+                            HistorySessionItem(
+                                session = session,
+                                isLive = index == 0 && isClientOnline,
+                                onClick = { onSessionClick(session) }
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                    }
+                }
             }
 
-            Text(
-                text = if (history.isNotEmpty()) "${strings.trackingHistory} (${history.size})" else strings.trackingHistory,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-            )
-
-            Text(
-                text = clientId,
-                style = MaterialTheme.typography.bodySmall,
-                color = indicatorPurple,
-                modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 16.dp)
-            )
-
-            if (isLoading && history.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(200.dp),
-                    contentAlignment = Alignment.Center
+            // Floating Scroll-to-Top Button
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showButton,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 24.dp, bottom = 48.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(0)
+                        }
+                    },
+                    containerColor = indicatorPurple,
+                    contentColor = Color.White,
+                    shape = CircleShape,
+                    modifier = Modifier.shadow(8.dp, CircleShape)
                 ) {
-                    CircularProgressIndicator(color = indicatorPurple)
-                }
-            } else if (history.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(200.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(strings.noHistoryFound, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScrollbar(listState, indicatorPurple),
-                    contentPadding = PaddingValues(horizontal = 16.dp)
-                ) {
-                    itemsIndexed(history) { index, session ->
-                        HistorySessionItem(
-                            session = session,
-                            isLive = index == 0 && isClientOnline,
-                            onClick = { onSessionClick(session) }
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Scroll to top")
                 }
             }
         }
