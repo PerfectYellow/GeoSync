@@ -19,6 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
@@ -27,6 +29,7 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -50,6 +53,7 @@ import org.osmdroid.views.overlay.compass.CompassOverlay
 import org.osmdroid.views.overlay.compass.InternalCompassOrientationProvider
 import org.osmdroid.views.overlay.gestures.RotationGestureOverlay
 import org.osmdroid.views.overlay.ScaleBarOverlay
+import org.osmdroid.views.overlay.Polyline
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.annotations.IconFactory
@@ -113,12 +117,18 @@ actual fun GoogleMapView(
     defaultLatitude: Double?,
     defaultLongitude: Double?,
     cameraState: MapCameraState,
-    onCameraChanged: (MapCameraState) -> Unit
+    onCameraChanged: (MapCameraState) -> Unit,
+    reviewSession: com.example.geosync.network.TrackingSessionHistory?
 ) {
     // Trigger for programmatic zoom/position changes
     var externalMoveTrigger by remember { mutableLongStateOf(0L) }
     var isMapReady by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    // RESET isMapReady when switching between Live and Review modes to prevent black flash
+    LaunchedEffect(reviewSession != null) {
+        isMapReady = false
+    }
     
     // Determine which engine to use for offline mode based on config and file availability
     val useMapLibreForOffline = remember(context, mapMode) { 
@@ -151,19 +161,21 @@ actual fun GoogleMapView(
         if (mapMode == MapMode.MAP_IR || mapMode == MapMode.INTERNAL || mapMode == MapMode.OPEN_STREET || useMapLibreForOffline) {
             MapLibreMapView(
                 modifier = Modifier.fillMaxSize(),
-                locations = locations,
+                locations = if (reviewSession != null) emptyMap() else locations,
                 mapMode = mapMode,
                 selectedClientId = selectedClientId,
                 focusTrigger = focusTrigger,
                 externalMoveTrigger = externalMoveTrigger,
                 cameraState = cameraState,
                 onCameraChanged = onCameraChanged,
-                onMapReady = { isMapReady = true }
+                onMapReady = { isMapReady = true },
+                isMapReady = isMapReady,
+                reviewSession = reviewSession
             )
         } else {
             OsmdroidMapView(
                 modifier = Modifier.fillMaxSize(),
-                locations = locations,
+                locations = if (reviewSession != null) emptyMap() else locations,
                 mapMode = mapMode,
                 selectedClientId = selectedClientId,
                 focusTrigger = focusTrigger,
@@ -172,7 +184,9 @@ actual fun GoogleMapView(
                 defaultLongitude = defaultLongitude,
                 cameraState = cameraState,
                 onCameraChanged = onCameraChanged,
-                onMapReady = { isMapReady = true }
+                onMapReady = { isMapReady = true },
+                isMapReady = isMapReady,
+                reviewSession = reviewSession
             )
         }
 
@@ -180,6 +194,9 @@ actual fun GoogleMapView(
             MapPlaceholder(Modifier.fillMaxSize())
         }
 
+        // Solid background to prevent transparency holes during transitions
+        Box(Modifier.fillMaxSize().background(Color.White).zIndex(-1f))
+        
         // Zoom Controls
         Column(
             modifier = Modifier
@@ -248,9 +265,14 @@ private fun MapLibreMapView(
     externalMoveTrigger: Long,
     cameraState: MapCameraState,
     onCameraChanged: (MapCameraState) -> Unit,
-    onMapReady: () -> Unit
+    onMapReady: () -> Unit,
+    isMapReady: Boolean,
+    reviewSession: com.example.geosync.network.TrackingSessionHistory? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val primaryColorArgb = MaterialTheme.colorScheme.primary.toArgb()
+    val startColor = Color(0xFF4CAF50).toArgb()
+    val endColor = Color(0xFFF44336).toArgb()
     
     // Ensure offline assets are copied
     var assetsReady by remember { mutableStateOf(false) }
@@ -299,11 +321,11 @@ private fun MapLibreMapView(
     val styleUrl = when {
         mapMode == MapMode.OPEN_STREET -> {
             val osmStyleFile = File(context.cacheDir, OfflineMapConfig.OSM_STYLE_NAME)
-            if (assetsReady && osmStyleFile.exists()) {
+            if (assetsReady && osmStyleFile.exists() && osmStyleFile.length() > 0) {
                 "file://${osmStyleFile.absolutePath}"
             } else {
-                // Fallback to internal if file not ready, though MapLibre allows asset:// directly
-                "asset://${OfflineMapConfig.osmStyleAssetPath}"
+                // Fallback to online OSM style if local asset fails
+                "https://raw.githubusercontent.com/maplibre/demotiles/gh-pages/style.json"
             }
         }
         mapMode == MapMode.INTERNAL -> {
@@ -312,10 +334,9 @@ private fun MapLibreMapView(
         }
         mapMode == MapMode.OFFLINE -> {
             val styleFile = File(context.cacheDir, OfflineMapConfig.STYLE_JSON_NAME)
-            if (assetsReady && styleFile.exists()) {
+            if (assetsReady && styleFile.exists() && styleFile.length() > 0) {
                 "file://${styleFile.absolutePath}"
             } else {
-                // Fallback while copying or if failed
                 "https://map.ir/vector/styles/main/mapir-xyz-style.json"
             }
         }
@@ -325,20 +346,16 @@ private fun MapLibreMapView(
     val mapView = remember {
         val options = MapLibreMapOptions.createFromAttributes(context, null)
             .localIdeographFontFamily("sans-serif")
+            .textureMode(true) // Texture Mode is safer for Compose layering
 
         org.maplibre.android.maps.MapView(context, options).apply {
-            addOnDidFailLoadingMapListener { errorMessage ->
-                Log.e("MapView", "MapLibre: Map load failure: $errorMessage")
-            }
-
+            setBackgroundColor(android.graphics.Color.WHITE)
+            
             getMapAsync { map ->
                 map.uiSettings.isAttributionEnabled = false
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isCompassEnabled = true
-                map.uiSettings.isRotateGesturesEnabled = true
-                map.uiSettings.isTiltGesturesEnabled = true
 
-                // Initialize camera IMMEDIATELY to avoid global map flash
                 map.moveCamera(CameraUpdateFactory.newLatLngZoom(
                     LatLng(cameraState.latitude, cameraState.longitude),
                     cameraState.zoom
@@ -347,7 +364,6 @@ private fun MapLibreMapView(
                 map.addOnCameraIdleListener {
                     val pos = map.cameraPosition
                     pos.target?.let { target ->
-                        // Only report if it's NOT the uninitialized default state
                         if (target.latitude != 0.0 || target.longitude != 0.0 || pos.zoom > 1.0) {
                             onCameraChanged(MapCameraState(target.latitude, target.longitude, pos.zoom))
                         }
@@ -367,71 +383,119 @@ private fun MapLibreMapView(
         }
     }
 
-    var lastFocusTrigger by remember { mutableStateOf(0L) }
-    var lastExternalMoveTrigger by remember { mutableStateOf(0L) }
-    var centeredClientIds by remember { mutableStateOf(setOf<String>()) }
+    var lastExternalMoveTrigger by remember { mutableLongStateOf(0L) }
     var currentStyleUrl by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    var lastFocusTrigger by remember { mutableLongStateOf(0L) }
 
-    AndroidView(
-        factory = { mapView },
-        modifier = modifier,
-        update = { view ->
-            view.getMapAsync { map ->
-                // Apply style if changed
-                if (currentStyleUrl != styleUrl) {
-                    Log.d("MapView", "MapLibre: Attempting to load style from: $styleUrl")
-                    map.setStyle(styleUrl) { style ->
-                        Log.d("MapView", "MapLibre: Style loaded successfully. URL: $styleUrl")
-                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(
-                            LatLng(cameraState.latitude, cameraState.longitude),
-                            cameraState.zoom
-                        ))
-                        // Add a small extra delay to ensure the surface has fully swapped
-                        // from the black background to the first rendered tiles.
-                        scope.launch {
-                            kotlinx.coroutines.delay(300)
-                            onMapReady()
+    // Opaque background layer
+    Box(modifier = modifier.background(Color.White)) {
+        // Dedicated Drawing and Focus Logic
+        LaunchedEffect(mapView, locations, reviewSession, currentStyleUrl, isMapReady, selectedClientId, focusTrigger) {
+            if (isMapReady) {
+                mapView.getMapAsync { map ->
+                    try {
+                        map.clear()
+                        
+                        if (reviewSession != null) {
+                            val points = reviewSession.points
+                            if (points.isNotEmpty()) {
+                                val latLngs = points.map { LatLng(it.latitude, it.longitude) }
+                                
+                                // 1. Draw path (Road)
+                                if (latLngs.size > 1) {
+                                    map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                                        .addAll(latLngs)
+                                        .color(primaryColorArgb)
+                                        .width(8f))
+                                }
+                                
+                                // 2. Start marker
+                                val startPos = latLngs.first()
+                                val startIcon = IconFactory.getInstance(context).fromBitmap(
+                                    createTextBitmap(context, "START", startColor, tailAtTop = false)
+                                )
+                                map.addMarker(MarkerOptions().position(startPos).icon(startIcon))
+                                
+                                // 3. End marker
+                                if (latLngs.size >= 2) {
+                                    val endPos = latLngs.last()
+                                    val endIcon = IconFactory.getInstance(context).fromBitmap(
+                                        createTextBitmap(context, "END", endColor, tailAtTop = true)
+                                    )
+                                    map.addMarker(MarkerOptions().position(endPos).icon(endIcon))
+                                }
+                                
+                                // 4. Zoom
+                                if (latLngs.size > 1) {
+                                    val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
+                                    latLngs.forEach { boundsBuilder.include(it) }
+                                    map.animateCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 120))
+                                } else {
+                                    map.animateCamera(CameraUpdateFactory.newLatLngZoom(startPos, 16.0))
+                                }
+                            }
+                        } else {
+                            var focusAttempted = false
+                            locations.forEach { (id, location) ->
+                                val pos = LatLng(location.latitude, location.longitude)
+                                val shortId = if (id.length > 10) "${id.take(4)}...${id.takeLast(4)}" else id
+                                val clientColor = AdminUtils.getClientColor(id).toArgb()
+                                val iconBitmap = createTextBitmap(context, shortId, clientColor)
+                                val icon = IconFactory.getInstance(context).fromBitmap(iconBitmap)
+                                
+                                map.addMarker(MarkerOptions().position(pos).icon(icon).title(shortId))
+
+                                if (id == selectedClientId && focusTrigger != lastFocusTrigger) {
+                                    map.animateCamera(CameraUpdateFactory.newLatLngZoom(pos, 15.0))
+                                    focusAttempted = true
+                                }
+                            }
+
+                            if (focusAttempted || locations.isEmpty() || selectedClientId == null) {
+                                lastFocusTrigger = focusTrigger
+                            }
                         }
+                    } catch (e: Exception) {
+                        Log.e("MapLibre", "Drawing error", e)
                     }
-                    currentStyleUrl = styleUrl
-                }
-
-                // Apply external move (buttons)
-                if (externalMoveTrigger != lastExternalMoveTrigger) {
-                    map.animateCamera(CameraUpdateFactory.newLatLngZoom(
-                        LatLng(cameraState.latitude, cameraState.longitude),
-                        cameraState.zoom
-                    ))
-                    lastExternalMoveTrigger = externalMoveTrigger
-                }
-
-                map.clear()
-                locations.forEach { (id, location) ->
-                    val pos = LatLng(location.latitude, location.longitude)
-                    val shortId = if (id.length > 10) "${id.take(4)}...${id.takeLast(4)}" else id
-                    val clientColor = AdminUtils.getClientColor(id).toArgb()
-                    val iconBitmap = createTextBitmap(context, shortId, clientColor)
-                    val icon = IconFactory.getInstance(context).fromBitmap(iconBitmap)
-                    
-                    map.addMarker(MarkerOptions().position(pos).icon(icon).title(shortId))
-
-                    // Auto-center on a client the first time we receive their location
-                    if (id !in centeredClientIds) {
-                        map.animateCamera(CameraUpdateFactory.newLatLng(pos))
-                        centeredClientIds = centeredClientIds + id
-                    }
-
-                    if (id == selectedClientId && focusTrigger != lastFocusTrigger) {
-                        map.animateCamera(CameraUpdateFactory.newLatLng(pos))
-                    }
-                }
-                if (focusTrigger != lastFocusTrigger) {
-                    lastFocusTrigger = focusTrigger
                 }
             }
         }
-    )
+
+        AndroidView(
+            factory = { mapView },
+            modifier = Modifier.fillMaxSize(),
+            update = { view ->
+                view.getMapAsync { map ->
+                    if (currentStyleUrl != styleUrl) {
+                        map.setStyle(styleUrl) {
+                            map.moveCamera(CameraUpdateFactory.newLatLngZoom(
+                                LatLng(cameraState.latitude, cameraState.longitude),
+                                cameraState.zoom
+                            ))
+                            scope.launch {
+                                kotlinx.coroutines.delay(300)
+                                onMapReady()
+                            }
+                        }
+                        currentStyleUrl = styleUrl
+                    } else if (!isMapReady) {
+                        onMapReady()
+                    }
+
+                    if (externalMoveTrigger != lastExternalMoveTrigger) {
+                        map.animateCamera(CameraUpdateFactory.newLatLngZoom(
+                            LatLng(cameraState.latitude, cameraState.longitude),
+                            cameraState.zoom
+                        ))
+                        lastExternalMoveTrigger = externalMoveTrigger
+                    }
+                    view.invalidate()
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -446,16 +510,19 @@ private fun OsmdroidMapView(
     defaultLongitude: Double?,
     cameraState: MapCameraState,
     onCameraChanged: (MapCameraState) -> Unit,
-    onMapReady: () -> Unit
+    onMapReady: () -> Unit,
+    isMapReady: Boolean,
+    reviewSession: com.example.geosync.network.TrackingSessionHistory? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val primaryColorArgb = MaterialTheme.colorScheme.primary.toArgb()
+    val startColor = Color(0xFF4CAF50).toArgb()
+    val endColor = Color(0xFFF44336).toArgb()
     
     val isInitialized = remember { mutableStateOf(false) }
     LaunchedEffect(context) {
-        // Redundant setting here as a safety measure for tile downloader
         org.osmdroid.config.Configuration.getInstance().userAgentValue = context.packageName
         isInitialized.value = true
-        // Increased delay for Osmdroid to finish its first draw to avoid black flicker
         kotlinx.coroutines.delay(1000)
         onMapReady()
     }
@@ -472,55 +539,146 @@ private fun OsmdroidMapView(
         } else file
     }
 
+    val mapView = remember {
+        MapView(context).apply {
+            setMultiTouchControls(true)
+            setUseDataConnection(true)
+            setBuiltInZoomControls(false)
+            setBackgroundColor(android.graphics.Color.WHITE)
+            
+            // Texture Mode is better for lists/sheets
+            @Suppress("DEPRECATION")
+            isDrawingCacheEnabled = true
+            
+            overlays.add(RotationGestureOverlay(this))
+            val compassOverlay = CompassOverlay(context, InternalCompassOrientationProvider(context), this)
+            compassOverlay.enableCompass()
+            overlays.add(compassOverlay)
+
+            controller.setZoom(cameraState.zoom)
+            controller.setCenter(GeoPoint(cameraState.latitude, cameraState.longitude))
+
+            addMapListener(object : org.osmdroid.events.MapListener {
+                override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                    updateSharedCamera()
+                    return true
+                }
+                override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                    updateSharedCamera()
+                    return true
+                }
+                private fun updateSharedCamera() {
+                    val center = mapCenter as? GeoPoint
+                    if (center != null && (center.latitude != 0.0 || center.longitude != 0.0 || zoomLevelDouble > 1.0)) {
+                        onCameraChanged(MapCameraState(center.latitude, center.longitude, zoomLevelDouble))
+                    }
+                }
+            })
+        }
+    }
+
+    DisposableEffect(mapView) {
+        mapView.onResume()
+        onDispose {
+            mapView.onPause()
+        }
+    }
+
     var currentMapMode by remember { mutableStateOf<MapMode?>(null) }
     var centeredClientIds by remember { mutableStateOf(setOf<String>()) }
     var lastFocusTrigger by remember { mutableStateOf(0L) }
     var lastExternalMoveTrigger by remember { mutableStateOf(0L) }
 
+    // Dedicated Drawing Logic for Live/Review modes
+    LaunchedEffect(mapView, locations, reviewSession, isInitialized.value, isMapReady, centeredClientIds, selectedClientId, focusTrigger) {
+        if (isMapReady && isInitialized.value) {
+            val geoPoints = if (reviewSession != null) {
+                reviewSession.points.map { GeoPoint(it.latitude, it.longitude) }
+            } else emptyList()
+
+            mapView.overlays.clear()
+            
+            if (reviewSession != null) {
+                if (geoPoints.isNotEmpty()) {
+                    // 1. Draw path (Road)
+                    if (geoPoints.size > 1) {
+                        val line = Polyline().apply {
+                            setPoints(geoPoints)
+                            @Suppress("DEPRECATION")
+                            color = primaryColorArgb
+                            @Suppress("DEPRECATION")
+                            width = 12f
+                        }
+                        mapView.overlays.add(line)
+                    }
+                    
+                    // 2. Start Marker
+                    val startMarker = Marker(mapView).apply {
+                        position = geoPoints.first()
+                        icon = createTextDrawable(context, "START", startColor, tailAtTop = false)
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    }
+                    mapView.overlays.add(startMarker)
+                    
+                    // 3. End Marker
+                    if (geoPoints.size >= 2) {
+                        val endMarker = Marker(mapView).apply {
+                            position = geoPoints.last()
+                            icon = createTextDrawable(context, "END", endColor, tailAtTop = true)
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_TOP)
+                        }
+                        mapView.overlays.add(endMarker)
+                    }
+                    
+                    // 4. Zoom
+                    if (geoPoints.size > 1) {
+                        val bounds = org.osmdroid.util.BoundingBox.fromGeoPoints(geoPoints)
+                        mapView.zoomToBoundingBox(bounds, true, 120)
+                    } else {
+                        mapView.controller.setCenter(geoPoints.first())
+                        mapView.controller.setZoom(16.0)
+                    }
+                }
+            } else {
+                locations.forEach { (id, location) ->
+                    val point = GeoPoint(location.latitude, location.longitude)
+                    val shortId = if (id.length > 10) "${id.take(4)}...${id.takeLast(4)}" else id
+                    val clientColor = AdminUtils.getClientColor(id).toArgb()
+                    val marker = Marker(mapView).apply {
+                        position = point
+                        icon = createTextDrawable(context, shortId, clientColor)
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        title = shortId
+                    }
+                    mapView.overlays.add(marker)
+
+                    if (id !in centeredClientIds) {
+                        mapView.controller.animateTo(point)
+                        // Note: in a real app, update state via callback or shared state
+                    }
+                    if (id == selectedClientId && focusTrigger != lastFocusTrigger) {
+                        mapView.controller.animateTo(point)
+                    }
+                }
+            }
+            mapView.invalidate()
+        }
+    }
+
     if (isInitialized.value) {
+        // Force onMapReady when reset
+        LaunchedEffect(isInitialized.value, isMapReady) {
+            if (isInitialized.value && !isMapReady) {
+                onMapReady()
+            }
+        }
+        
         AndroidView(
             modifier = modifier,
-            factory = { ctx ->
-                MapView(ctx).apply {
-                    setMultiTouchControls(true)
-                    setUseDataConnection(true)
-                    setBuiltInZoomControls(false) // Using custom buttons
-                    
-                    overlays.add(RotationGestureOverlay(this))
-                    val compassOverlay = CompassOverlay(ctx, InternalCompassOrientationProvider(ctx), this)
-                    compassOverlay.enableCompass()
-                    overlays.add(compassOverlay)
-
-                    val scaleBarOverlay = ScaleBarOverlay(this)
-                    scaleBarOverlay.setCentred(true)
-                    scaleBarOverlay.setScaleBarOffset(ctx.resources.displayMetrics.widthPixels / 2, 10)
-                    overlays.add(scaleBarOverlay)
-
-                    controller.setZoom(cameraState.zoom)
-                    controller.setCenter(GeoPoint(cameraState.latitude, cameraState.longitude))
-
-                    addMapListener(object : org.osmdroid.events.MapListener {
-                        override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
-                            updateSharedCamera()
-                            return true
-                        }
-                        override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
-                            updateSharedCamera()
-                            return true
-                        }
-                        private fun updateSharedCamera() {
-                            val center = mapCenter as? GeoPoint
-                            if (center != null && (center.latitude != 0.0 || center.longitude != 0.0 || zoomLevelDouble > 1.0)) {
-                                onCameraChanged(MapCameraState(center.latitude, center.longitude, zoomLevelDouble))
-                            }
-                        }
-                    })
-                }
-            },
-            update = { mapView ->
-                // Apply external move (buttons)
+            factory = { mapView },
+            update = { view ->
                 if (externalMoveTrigger != lastExternalMoveTrigger) {
-                    mapView.controller.animateTo(
+                    view.controller.animateTo(
                         GeoPoint(cameraState.latitude, cameraState.longitude),
                         cameraState.zoom,
                         1000L
@@ -529,8 +687,7 @@ private fun OsmdroidMapView(
                 }
 
                 if (currentMapMode != mapMode) {
-                    try { mapView.tileProvider?.detach() } catch (e: Exception) {}
-
+                    try { view.tileProvider?.detach() } catch (e: Exception) {}
                     try {
                         when (mapMode) {
                             MapMode.OFFLINE -> {
@@ -540,71 +697,277 @@ private fun OsmdroidMapView(
                                         OfflineMapConfig.MAPFORGE_THEME, 
                                         "Offline"
                                     )
-                                    val density = context.resources.displayMetrics.density
-                                    // Using a smaller modifier to reduce the "huge" text effect
-                                    forgeSource.setUserScaleFactor(density * OfflineMapConfig.MAPFORGE_SCALE_MODIFIER)
-                                    mapView.setTileProvider(MapsForgeTileProvider(org.osmdroid.tileprovider.util.SimpleRegisterReceiver(context), forgeSource, null))
-                                    mapView.setTileSource(forgeSource)
-                                    mapView.setUseDataConnection(false)
-                                    if (defaultLatitude != null && defaultLongitude != null) {
-                                        mapView.controller.setCenter(GeoPoint(defaultLatitude, defaultLongitude))
-                                        mapView.controller.setZoom(14.0)
-                                    }
+                                    forgeSource.setUserScaleFactor(context.resources.displayMetrics.density * OfflineMapConfig.MAPFORGE_SCALE_MODIFIER)
+                                    view.setTileProvider(MapsForgeTileProvider(org.osmdroid.tileprovider.util.SimpleRegisterReceiver(context), forgeSource, null))
+                                    view.setTileSource(forgeSource)
+                                    view.setUseDataConnection(false)
                                 }
                             }
-                            MapMode.MAP_IR, MapMode.INTERNAL, MapMode.OPEN_STREET -> {
-                                mapView.setTileProvider(MapTileProviderBasic(context, TileSourceFactory.MAPNIK))
-                                mapView.setTileSource(TileSourceFactory.MAPNIK)
-                                mapView.setUseDataConnection(true)
-                                mapView.controller.setCenter(GeoPoint(cameraState.latitude, cameraState.longitude))
-                                mapView.controller.setZoom(cameraState.zoom)
+                            else -> {
+                                view.setTileProvider(MapTileProviderBasic(context, TileSourceFactory.MAPNIK))
+                                view.setTileSource(TileSourceFactory.MAPNIK)
+                                view.setUseDataConnection(true)
                             }
                         }
                         currentMapMode = mapMode
-                        mapView.invalidate()
                     } catch (e: Exception) {
-                        mapView.setTileProvider(MapTileProviderBasic(context, TileSourceFactory.MAPNIK))
-                        mapView.setTileSource(TileSourceFactory.MAPNIK)
                         currentMapMode = MapMode.OPEN_STREET
-                        mapView.invalidate()
                     }
                 }
-
-                mapView.overlays.removeAll { it is Marker }
-                locations.forEach { (id, location) ->
-                    val point = GeoPoint(location.latitude, location.longitude)
-                    val shortId = if (id.length > 10) "${id.take(4)}...${id.takeLast(4)}" else id
-                    val clientColor = AdminUtils.getClientColor(id).toArgb()
-                    val marker = Marker(mapView).apply {
-                        position = point
-                        icon = createTextDrawable(context, shortId, clientColor)
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM) // Tail points to coordinate
-                        title = shortId
-                    }
-                    mapView.overlays.add(marker)
-
-                    if (id !in centeredClientIds) {
-                        mapView.controller.animateTo(point)
-                        centeredClientIds = centeredClientIds + id
-                    }
-                    if (id == selectedClientId && focusTrigger != lastFocusTrigger) {
-                        mapView.controller.animateTo(point)
-                    }
-                }
+                
                 if (focusTrigger != lastFocusTrigger) lastFocusTrigger = focusTrigger
-                mapView.invalidate()
+                view.invalidate()
             }
         )
     }
 }
 
-private fun createTextBitmap(context: android.content.Context, text: String, bgColor: Int): Bitmap {
+@Composable
+actual fun HistoryReviewMapView(
+    modifier: Modifier,
+    session: com.example.geosync.network.TrackingSessionHistory,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val primaryColorArgb = MaterialTheme.colorScheme.primary.toArgb()
+    val clientColor = AdminUtils.getClientColor(session.clientId ?: "")
+    
+    val startColor = 0xFF4CAF50.toInt()
+    val endColor = 0xFFF44336.toInt()
+
+    val styleUrl = "asset://${OfflineMapConfig.osmStyleAssetPath}"
+    var isStyleReady by remember { mutableStateOf(false) }
+    var externalMoveTrigger by remember { mutableLongStateOf(0L) }
+
+    val mapView = remember {
+        val options = MapLibreMapOptions.createFromAttributes(context, null)
+            .localIdeographFontFamily("sans-serif")
+        
+        org.maplibre.android.maps.MapView(context, options).apply {
+            setBackgroundColor(android.graphics.Color.WHITE)
+            getMapAsync { map ->
+                map.uiSettings.isAttributionEnabled = false
+                map.uiSettings.isLogoEnabled = false
+                
+                map.setStyle(styleUrl) {
+                    isStyleReady = true
+                }
+
+                map.addOnCameraIdleListener {
+                    val pos = map.cameraPosition
+                    pos.target?.let { target ->
+                        if (target.latitude != 0.0 || target.longitude != 0.0 || pos.zoom > 1.0) {
+                            onCameraChanged(MapCameraState(target.latitude, target.longitude, pos.zoom))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Initial Auto-Focus logic
+    var initialFocusDone by remember { mutableStateOf(false) }
+    LaunchedEffect(mapView, session, isStyleReady) {
+        if (isStyleReady && !initialFocusDone) {
+            mapView.getMapAsync { map ->
+                map.clear()
+                val points = session.points
+                if (points.isNotEmpty()) {
+                    val latLngs = points.map { LatLng(it.latitude, it.longitude) }
+                    
+                    // 1. Path (Neon Glow) - Only draw if there's significant movement
+                    if (latLngs.size > 2 || session.totalDistanceKm > 0.005) {
+                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                            .addAll(latLngs)
+                            .color(android.graphics.Color.argb(60, android.graphics.Color.red(clientColor.toArgb()), android.graphics.Color.green(clientColor.toArgb()), android.graphics.Color.blue(clientColor.toArgb())))
+                            .width(18f))
+                        
+                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                            .addAll(latLngs)
+                            .color(clientColor.toArgb())
+                            .width(8f))
+                    }
+
+                    // 2. Start Marker
+                    val startIcon = IconFactory.getInstance(context).fromBitmap(
+                        createModernMarker(context, true, startColor).bitmap
+                    )
+                    map.addMarker(MarkerOptions().position(latLngs.first()).icon(startIcon))
+                    
+                    // 3. End Marker
+                    if (latLngs.size >= 2) {
+                        val endIcon = IconFactory.getInstance(context).fromBitmap(
+                            createModernMarker(context, false, endColor).bitmap
+                        )
+                        map.addMarker(MarkerOptions().position(latLngs.last()).icon(endIcon))
+                    }
+                    
+                    // 4. Initial Perfect Zoom
+                    if (latLngs.size > 2 && session.totalDistanceKm > 0.005) {
+                        val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
+                        latLngs.forEach { boundsBuilder.include(it) }
+                        map.moveCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 100))
+                    } else {
+                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLngs.first(), 17.0))
+                    }
+                    initialFocusDone = true
+                }
+            }
+        }
+    }
+
+    DisposableEffect(mapView) {
+        mapView.onStart()
+        mapView.onResume()
+        onDispose {
+            mapView.onPause()
+            mapView.onStop()
+            mapView.onDestroy()
+        }
+    }
+
+    Box(modifier = modifier.background(Color.White)) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { mapView },
+            update = { view ->
+                view.getMapAsync { map ->
+                    if (externalMoveTrigger > 0) {
+                        map.animateCamera(CameraUpdateFactory.newLatLngZoom(
+                            LatLng(cameraState.latitude, cameraState.longitude),
+                            cameraState.zoom
+                        ))
+                    }
+                }
+            }
+        )
+
+        // Zoom Controls (Brought back for history map)
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = 16.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+        ) {
+            FilledIconButton(
+                onClick = {
+                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(20.0)))
+                    externalMoveTrigger++
+                },
+                modifier = Modifier.size(44.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Zoom In")
+            }
+
+            FilledIconButton(
+                onClick = {
+                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom - 1).coerceAtLeast(1.0)))
+                    externalMoveTrigger++
+                },
+                modifier = Modifier.size(44.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(Icons.Default.Remove, contentDescription = "Zoom Out")
+            }
+            
+            // Re-focus on trip button
+            FilledIconButton(
+                onClick = {
+                    initialFocusDone = false // Trigger the LaunchedEffect logic again
+                },
+                modifier = Modifier.size(44.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    contentColor = MaterialTheme.colorScheme.tertiary
+                )
+            ) {
+                Icon(Icons.Default.MyLocation, contentDescription = "Center on Trip")
+            }
+        }
+
+        if (!isStyleReady) {
+            MapPlaceholder(Modifier.fillMaxSize())
+        }
+    }
+}
+
+private fun createModernMarker(
+    context: android.content.Context,
+    isStart: Boolean,
+    color: Int
+): BitmapDrawable {
+    val density = context.resources.displayMetrics.density
+    val size = (if (isStart) 14f else 22f) * density
+    val width = size.toInt().coerceAtLeast(1)
+    val height = (size * 1.2f).toInt().coerceAtLeast(1)
+    
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    if (isStart) {
+        // Simple elegant circle for start
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.color = color
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - 3f * density, paint)
+    } else {
+        // Modern pin shape for end
+        val path = android.graphics.Path()
+        val radius = size / 2f
+        val centerX = size / 2f
+        val centerY = size / 2f
+        
+        // Pin head
+        path.addCircle(centerX, centerY, radius, android.graphics.Path.Direction.CW)
+        
+        // Pin tip
+        val tipPath = android.graphics.Path()
+        tipPath.moveTo(centerX - radius * 0.8f, centerY + radius * 0.5f)
+        tipPath.lineTo(centerX, size * 1.15f)
+        tipPath.lineTo(centerX + radius * 0.8f, centerY + radius * 0.5f)
+        tipPath.close()
+        
+        path.op(tipPath, android.graphics.Path.Op.UNION)
+        
+        // Draw shadow
+        paint.color = android.graphics.Color.BLACK
+        paint.alpha = 40
+        canvas.drawCircle(centerX, size * 1.15f, 4f * density, paint)
+        
+        // Draw pin
+        paint.color = color
+        paint.alpha = 255
+        canvas.drawPath(path, paint)
+        
+        // Inner white circle
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(centerX, centerY, radius * 0.4f, paint)
+    }
+
+    return BitmapDrawable(context.resources, bitmap)
+}
+
+private fun createTextBitmap(
+    context: android.content.Context, 
+    text: String, 
+    bgColor: Int, 
+    tailAtTop: Boolean = false
+): Bitmap {
     val density = context.resources.displayMetrics.density
     val scale = density * OfflineMapConfig.MARKER_SCALE_MODIFIER
     
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.WHITE
-        textSize = 12f * scale
+        textSize = 14f * scale
         textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
@@ -612,36 +975,56 @@ private fun createTextBitmap(context: android.content.Context, text: String, bgC
     val bounds = Rect()
     paint.getTextBounds(text, 0, text.length, bounds)
     
-    val paddingH = 8f * scale
-    val paddingV = 6f * scale
-    val tailSize = 6f * scale
-    val cornerRadius = 6f * scale
+    val paddingH = 12f * scale
+    val paddingV = 10f * scale
+    val tailSize = 10f * scale
+    val cornerRadius = 12f * scale
     
-    val widthFloat = (bounds.width() + paddingH * 2).coerceAtLeast(1f)
-    val heightFloat = (bounds.height() + paddingV * 2 + tailSize).coerceAtLeast(1f)
+    val widthFloat = (bounds.width() + paddingH * 2).coerceAtLeast(40f * scale).coerceAtLeast(1f)
+    val heightFloat = (bounds.height() + paddingV * 2 + tailSize).coerceAtLeast(40f * scale).coerceAtLeast(1f)
     
-    val width = kotlin.math.ceil(widthFloat).toInt()
-    val height = kotlin.math.ceil(heightFloat).toInt()
+    val width = kotlin.math.ceil(widthFloat).toInt().coerceAtLeast(1)
+    val height = kotlin.math.ceil(heightFloat).toInt().coerceAtLeast(1)
     
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     
-    val rectF = RectF(0f, 0f, widthFloat, heightFloat - tailSize)
-    canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, backgroundPaint)
-    
     val path = android.graphics.Path()
-    path.moveTo(widthFloat / 2f - tailSize, heightFloat - tailSize)
-    path.lineTo(widthFloat / 2f + tailSize, heightFloat - tailSize)
-    path.lineTo(widthFloat / 2f, heightFloat)
-    path.close()
-    canvas.drawPath(path, backgroundPaint)
-    
-    canvas.drawText(text, widthFloat / 2f, (heightFloat - tailSize) / 2f - bounds.centerY(), paint)
+    if (tailAtTop) {
+        // Bubble is BELOW the location (Tail points UP, pointer at TOP)
+        val rectF = RectF(0f, tailSize, widthFloat, heightFloat)
+        canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, backgroundPaint)
+        
+        path.moveTo(widthFloat / 2f - tailSize, tailSize)
+        path.lineTo(widthFloat / 2f, 0f)
+        path.lineTo(widthFloat / 2f + tailSize, tailSize)
+        path.close()
+        canvas.drawPath(path, backgroundPaint)
+        
+        canvas.drawText(text, widthFloat / 2f, (heightFloat + tailSize) / 2f - bounds.centerY(), paint)
+    } else {
+        // Bubble is ABOVE the location (Tail points DOWN, pointer at BOTTOM)
+        val rectF = RectF(0f, 0f, widthFloat, heightFloat - tailSize)
+        canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, backgroundPaint)
+        
+        path.moveTo(widthFloat / 2f - tailSize, heightFloat - tailSize)
+        path.lineTo(widthFloat / 2f, heightFloat)
+        path.lineTo(widthFloat / 2f + tailSize, heightFloat - tailSize)
+        path.close()
+        canvas.drawPath(path, backgroundPaint)
+        
+        canvas.drawText(text, widthFloat / 2f, (heightFloat - tailSize) / 2f - bounds.centerY(), paint)
+    }
     return bitmap
 }
 
-private fun createTextDrawable(context: android.content.Context, text: String, bgColor: Int): BitmapDrawable {
-    return BitmapDrawable(context.resources, createTextBitmap(context, text, bgColor))
+private fun createTextDrawable(
+    context: android.content.Context, 
+    text: String, 
+    bgColor: Int, 
+    tailAtTop: Boolean = false
+): BitmapDrawable {
+    return BitmapDrawable(context.resources, createTextBitmap(context, text, bgColor, tailAtTop))
 }
 
 @Composable
@@ -693,5 +1076,127 @@ fun MapPlaceholder(modifier: Modifier = Modifier) {
             modifier = Modifier.size(64.dp),
             tint = primaryColor.copy(alpha = 0.2f * alpha)
         )
+    }
+}
+
+@Composable
+actual fun HistoryMapView(
+    modifier: Modifier,
+    points: List<com.example.geosync.network.HistoryPoint>,
+    routeColor: Color
+) {
+    val primaryColorArgb = MaterialTheme.colorScheme.primary.toArgb()
+    val actualRouteColor = if (routeColor != Color.Unspecified) routeColor.toArgb() else primaryColorArgb
+    val context = androidx.compose.ui.platform.LocalContext.current
+    
+    val startColor = 0xFF4CAF50.toInt()
+    val endColor = 0xFFF44336.toInt()
+
+    if (points.isEmpty()) {
+        Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Route, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+        }
+        return
+    }
+
+    val isInitialized = remember { mutableStateOf(false) }
+    
+    // Config OSMLoader for compliance
+    LaunchedEffect(context) {
+        org.osmdroid.config.Configuration.getInstance().apply {
+            userAgentValue = "GeoSync/1.0 (ir.icodes.geosync; contact@icodes.ir)"
+            additionalHttpRequestProperties["Referer"] = "android://ir.icodes.geosync"
+            tileDownloadThreads = 2
+        }
+        isInitialized.value = true
+    }
+
+    val mapView = remember {
+        MapView(context).apply {
+            setMultiTouchControls(false)
+            setUseDataConnection(true)
+            setBuiltInZoomControls(false)
+            setBackgroundColor(android.graphics.Color.WHITE)
+            setHasTransientState(true)
+            
+            // Use basic Mapnik (OSM)
+            setTileProvider(MapTileProviderBasic(context, TileSourceFactory.MAPNIK))
+            setTileSource(TileSourceFactory.MAPNIK)
+        }
+    }
+
+    DisposableEffect(mapView) {
+        mapView.onResume()
+        onDispose {
+            mapView.onPause()
+        }
+    }
+
+    // Handle drawing logic in a stable way
+    LaunchedEffect(mapView, points, actualRouteColor, isInitialized.value) {
+        if (isInitialized.value) {
+            val geoPoints = points.map { GeoPoint(it.latitude, it.longitude) }
+            if (geoPoints.isNotEmpty()) {
+                mapView.overlays.clear()
+                
+                // 1. Dual Layer Glow Path
+                val glowLine = Polyline().apply {
+                    setPoints(geoPoints)
+                    @Suppress("DEPRECATION")
+                    color = android.graphics.Color.argb(60, android.graphics.Color.red(actualRouteColor), android.graphics.Color.green(actualRouteColor), android.graphics.Color.blue(actualRouteColor))
+                    @Suppress("DEPRECATION")
+                    width = 22f
+                }
+                mapView.overlays.add(glowLine)
+
+                val line = Polyline().apply {
+                    setPoints(geoPoints)
+                    @Suppress("DEPRECATION")
+                    color = actualRouteColor
+                    @Suppress("DEPRECATION")
+                    width = 10f
+                }
+                mapView.overlays.add(line)
+
+                // 2. Modern Markers
+                val startMarker = Marker(mapView).apply {
+                    position = geoPoints.first()
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    icon = createModernMarker(context, true, startColor)
+                }
+                mapView.overlays.add(startMarker)
+
+                if (geoPoints.size >= 2) {
+                    val endMarker = Marker(mapView).apply {
+                        position = geoPoints.last()
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        icon = createModernMarker(context, false, endColor)
+                    }
+                    mapView.overlays.add(endMarker)
+                }
+
+                // 3. Perfect Zoom
+                if (geoPoints.size > 1) {
+                    val bounds = org.osmdroid.util.BoundingBox.fromGeoPoints(geoPoints)
+                    mapView.zoomToBoundingBox(bounds, false, 80)
+                } else {
+                    mapView.controller.setCenter(geoPoints.first())
+                    mapView.controller.setZoom(16.0)
+                }
+                mapView.invalidate()
+            }
+        }
+    }
+
+    Box(modifier = modifier.background(Color.White)) {
+        if (isInitialized.value) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { mapView },
+                update = { /* Updates are handled in LaunchedEffect */ }
+            )
+        } else {
+            MapPlaceholder(Modifier.fillMaxSize())
+        }
     }
 }

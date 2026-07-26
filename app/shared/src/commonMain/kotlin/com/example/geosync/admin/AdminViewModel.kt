@@ -50,11 +50,17 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _cameraState = MutableStateFlow(MapCameraState(35.6994, 51.3377, 11.0))
     val cameraState: StateFlow<MapCameraState> = _cameraState.asStateFlow()
 
+    private val _reviewCameraState = MutableStateFlow(MapCameraState(35.6994, 51.3377, 11.0))
+    val reviewCameraState: StateFlow<MapCameraState> = _reviewCameraState.asStateFlow()
+
     private val _historyState = MutableStateFlow<Map<String, List<TrackingSessionHistory>>>(emptyMap())
     val historyState: StateFlow<Map<String, List<TrackingSessionHistory>>> = _historyState.asStateFlow()
 
     private val _isHistoryLoading = MutableStateFlow(false)
     val isHistoryLoading: StateFlow<Boolean> = _isHistoryLoading.asStateFlow()
+
+    private val _reviewSession = MutableStateFlow<TrackingSessionHistory?>(null)
+    val reviewSession: StateFlow<TrackingSessionHistory?> = _reviewSession.asStateFlow()
 
     private var lastOnlineMode = MapMode.OPEN_STREET
 
@@ -265,7 +271,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         viewModelScope.launch {
             _isHistoryLoading.value = true
             try {
-                val history = client.fetchClientHistory(clientId)
+                val history = client.fetchClientHistory(clientId).map { it.copy(clientId = clientId) }
                 _historyState.update { it + (clientId to history) }
             } catch (e: Exception) {
                 println("❌ Failed to load history for $clientId: ${e.message}")
@@ -273,6 +279,21 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                 _isHistoryLoading.value = false
             }
         }
+    }
+
+    fun enterReviewMode(session: TrackingSessionHistory) {
+        _reviewSession.value = session
+        _isMapExpanded.value = true
+    }
+
+    fun exitReviewMode() {
+        _reviewSession.value = null
+        _isMapExpanded.value = false
+        _isListExpanded.value = true
+    }
+
+    fun updateReviewCameraState(state: MapCameraState) {
+        _reviewCameraState.value = state
     }
 
     override fun onCleared() {

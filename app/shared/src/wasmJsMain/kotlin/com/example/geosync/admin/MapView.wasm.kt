@@ -19,9 +19,29 @@ actual fun GoogleMapView(
     defaultLatitude: Double?,
     defaultLongitude: Double?,
     cameraState: MapCameraState,
-    onCameraChanged: (MapCameraState) -> Unit
+    onCameraChanged: (MapCameraState) -> Unit,
+    reviewSession: com.example.geosync.network.TrackingSessionHistory?
 ) {
     Box(modifier = modifier.background(Color.DarkGray)) {
         Text("Map not supported on Wasm yet", color = Color.White, modifier = Modifier.align(Alignment.Center))
     }
+}
+
+@Composable
+actual fun HistoryMapView(
+    modifier: Modifier,
+    points: List<com.example.geosync.network.HistoryPoint>,
+    routeColor: Color
+) {
+    Box(modifier = modifier.background(Color.Gray))
+}
+
+@Composable
+actual fun HistoryReviewMapView(
+    modifier: Modifier,
+    session: com.example.geosync.network.TrackingSessionHistory,
+    cameraState: MapCameraState,
+    onCameraChanged: (MapCameraState) -> Unit
+) {
+    Box(modifier = modifier.background(Color.DarkGray))
 }

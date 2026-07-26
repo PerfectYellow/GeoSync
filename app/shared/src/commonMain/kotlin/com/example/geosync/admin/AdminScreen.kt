@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -17,12 +18,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.datetime.Instant as KInstant
+import kotlinx.datetime.Clock as KClock
 import com.example.geosync.NotificationManager
 import com.example.geosync.LanguageSelector
 import com.example.geosync.localization.LocalStrings
@@ -44,8 +48,15 @@ fun AdminScreen(
     val isListExpanded by viewModel.isListExpanded.collectAsState()
     val isMapExpanded by viewModel.isMapExpanded.collectAsState()
     val cameraState by viewModel.cameraState.collectAsState()
+    val reviewCameraState by viewModel.reviewCameraState.collectAsState()
     val historyState by viewModel.historyState.collectAsState()
     val isHistoryLoading by viewModel.isHistoryLoading.collectAsState()
+    val reviewSession by viewModel.reviewSession.collectAsState()
+
+    // Sync Bottom Bar visibility with Map Expansion state
+    LaunchedEffect(isMapExpanded) {
+        onMapToggle(isMapExpanded)
+    }
 
     val connectivityObserver = rememberConnectivityObserver()
     val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
@@ -87,7 +98,12 @@ fun AdminScreen(
             },
             historyState = historyState,
             isHistoryLoading = isHistoryLoading,
-            onLoadHistory = { viewModel.loadHistory(it) }
+            onLoadHistory = { viewModel.loadHistory(it) },
+            reviewSession = reviewSession,
+            reviewCameraState = reviewCameraState,
+            onReviewCameraChanged = { viewModel.updateReviewCameraState(it) },
+            onEnterReview = { viewModel.enterReviewMode(it) },
+            onExitReview = { viewModel.exitReviewMode() }
         )
     }
 }
@@ -114,7 +130,12 @@ fun AdminContent(
     onMapToggle: (Boolean) -> Unit = {},
     historyState: Map<String, List<TrackingSessionHistory>> = emptyMap(),
     isHistoryLoading: Boolean = false,
-    onLoadHistory: (String) -> Unit = {}
+    onLoadHistory: (String) -> Unit = {},
+    reviewSession: TrackingSessionHistory? = null,
+    reviewCameraState: MapCameraState = MapCameraState(35.6994, 51.3377, 11.0),
+    onReviewCameraChanged: (MapCameraState) -> Unit = {},
+    onEnterReview: (TrackingSessionHistory) -> Unit = {},
+    onExitReview: () -> Unit = {}
 ) {
     var selectedClientId by remember { mutableStateOf<String?>(null) }
     var clientToRemove by remember { mutableStateOf<String?>(null) }
@@ -140,7 +161,12 @@ fun AdminContent(
             clientId = id,
             history = historyState[id] ?: emptyList(),
             isLoading = isHistoryLoading,
-            onDismiss = { clientForHistory = null }
+            isClientOnline = locations[id]?.isOnline == true,
+            onDismiss = { clientForHistory = null },
+            onSessionClick = { session ->
+                onEnterReview(session)
+                clientForHistory = null
+            }
         )
     }
 
@@ -169,24 +195,38 @@ fun AdminContent(
         locations.filterKeys { it in trackedClientIds }
     }
 
+    // Auto-focus on new clients when they appear for the first time
+    var knownClientIds by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(filteredLocations.keys) {
+        val newClients = filteredLocations.keys - knownClientIds
+        if (newClients.isNotEmpty()) {
+            selectedClientId = newClients.first()
+            focusTrigger++
+        }
+        knownClientIds = filteredLocations.keys
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface) // Prevent black flash
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
-        // 1. Map in the background
-        MapPreview(
-            locations = filteredLocations,
-            mapMode = mapMode,
-            selectedClientId = selectedClientId,
-            focusTrigger = focusTrigger,
-            cameraState = cameraState,
-            onCameraChanged = onCameraChanged,
-            modifier = Modifier.fillMaxSize()
-        )
+        // 1. Map in the background (Only visible when not in review mode)
+        if (reviewSession == null) {
+            MapPreview(
+                locations = filteredLocations,
+                mapMode = mapMode,
+                selectedClientId = selectedClientId,
+                focusTrigger = focusTrigger,
+                cameraState = cameraState,
+                onCameraChanged = onCameraChanged,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
         // 2. Controls in the foreground
-        if (!isMapExpanded) {
+        if (!isMapExpanded && reviewSession == null) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -372,24 +412,104 @@ fun AdminContent(
                 }
             }
         } else {
-            // Restore UI Button (Floating)
-            IconButton(
-                onClick = { 
-                    onMapExpandedChange(false)
-                    onMapToggle(false)
-                },
+            // 3. Review Mode / Expanded Map Overlay
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .shadow(elevation = 6.dp, shape = CircleShape)
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), CircleShape)
-                    .size(48.dp)
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surface) // Solid background
             ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = strings.collapseMap,
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                // Dedicated Full-Screen History Map (Isolated high-performance instance)
+                reviewSession?.let { session ->
+                    HistoryReviewMapView(
+                        modifier = Modifier.fillMaxSize(),
+                        session = session,
+                        cameraState = reviewCameraState,
+                        onCameraChanged = onReviewCameraChanged
+                    )
+                }
+
+                // Overlay Controls
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    // Exit Review / Collapse Map Button
+                    Surface(
+                        modifier = Modifier.align(Alignment.TopEnd),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                        shape = CircleShape,
+                        shadowElevation = 6.dp
+                    ) {
+                        IconButton(
+                            onClick = { 
+                                if (reviewSession != null) {
+                                    onExitReview()
+                                } else {
+                                    onMapExpandedChange(false)
+                                    onMapToggle(false)
+                                }
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = strings.close,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Review Info Banner
+                    reviewSession?.let { session ->
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+                            shape = RoundedCornerShape(16.dp),
+                            shadowElevation = 4.dp
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.History, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                val distance = session.totalDistanceKm
+                                val distanceText = if (distance < 1.0) {
+                                    "${(distance * 1000).toInt()} m"
+                                } else {
+                                    "${distance.toString().take(4)} km"
+                                }
+                                
+                                val durationText = remember(session) {
+                                    try {
+                                        val startStr = session.startTime ?: return@remember "---"
+                                        val start = KInstant.parse(startStr)
+                                        val endStr = session.endTime
+                                        val end = if (endStr != null) KInstant.parse(endStr) else start // Default to 0 duration if live
+                                        val diff = end - start
+                                        val totalSecs = diff.inWholeSeconds
+                                        if (totalSecs >= 3600) "${totalSecs/3600}h ${(totalSecs%3600)/60}m" 
+                                        else if (totalSecs >= 60) "${totalSecs/60} min" 
+                                        else "${totalSecs}s"
+                                    } catch(_: Exception) { "---" }
+                                }
+                                
+                                val fullDurationText = if (session.endTime == null) "$durationText (Live)" else durationText
+
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "$distanceText • $fullDurationText",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Black
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -569,7 +689,9 @@ fun HistoryBottomSheet(
     clientId: String,
     history: List<TrackingSessionHistory>,
     isLoading: Boolean,
-    onDismiss: () -> Unit
+    isClientOnline: Boolean,
+    onDismiss: () -> Unit,
+    onSessionClick: (TrackingSessionHistory) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val strings = LocalStrings.current
@@ -620,8 +742,12 @@ fun HistoryBottomSheet(
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 16.dp)
                 ) {
-                    items(history) { session ->
-                        HistorySessionItem(session)
+                    itemsIndexed(history) { index, session ->
+                        HistorySessionItem(
+                            session = session,
+                            isLive = index == 0 && isClientOnline,
+                            onClick = { onSessionClick(session) }
+                        )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
@@ -631,7 +757,11 @@ fun HistoryBottomSheet(
 }
 
 @Composable
-fun HistorySessionItem(session: TrackingSessionHistory) {
+fun HistorySessionItem(
+    session: TrackingSessionHistory,
+    isLive: Boolean,
+    onClick: () -> Unit
+) {
     val strings = LocalStrings.current
     val startPoint = session.points.firstOrNull()
     val endPoint = session.points.lastOrNull()
@@ -644,127 +774,172 @@ fun HistorySessionItem(session: TrackingSessionHistory) {
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth().shadow(4.dp, RoundedCornerShape(24.dp)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(4.dp, RoundedCornerShape(24.dp)),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            // Header: Distance and Status
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                        shape = CircleShape,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.Route,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        text = distanceText,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                
-                Surface(
-                    color = if (session.endTime != null) 
-                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f) 
-                    else 
-                        Color(0xFFE8F5E9),
-                    shape = RoundedCornerShape(12.dp)
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max)) {
+            // LEFT: Info Column
+            Column(modifier = Modifier.weight(1.3f).padding(20.dp)) {
+                // Header: Distance and Status
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (session.endTime != null) strings.statusOffline else strings.statusLive,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (session.endTime != null) 
-                            MaterialTheme.colorScheme.onSecondaryContainer 
-                        else 
-                            Color(0xFF2E7D32),
-                        fontWeight = FontWeight.Black
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Timeline-like Start and End
-            Column(modifier = Modifier.fillMaxWidth()) {
-                // START row
-                Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-                    // Timeline part
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(top = 4.dp, end = 16.dp).fillMaxHeight()
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(Color(0xFF4CAF50), CircleShape)
-                                .shadow(2.dp, CircleShape)
-                        )
-                        // Vertical line
-                        Box(
-                            modifier = Modifier
-                                .padding(vertical = 4.dp)
-                                .width(2.dp)
-                                .weight(1f)
-                                .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(1.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                            shape = CircleShape,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.Route,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = distanceText,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                     
-                    // Info part
-                    HistoryTimeLocation(
-                        label = strings.sessionStart,
-                        time = session.startTime,
-                        lat = startPoint?.latitude,
-                        lng = startPoint?.longitude,
-                        isStart = true
-                    )
+                    Surface(
+                        color = if (isLive) 
+                            Color(0xFFE8F5E9)
+                        else 
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = if (isLive) strings.statusLive else strings.statusOffline,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isLive) 
+                                Color(0xFF2E7D32)
+                            else 
+                                MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
-                // END row
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    // Timeline part
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(top = 4.dp, end = 16.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(if (session.endTime != null) Color(0xFFF44336) else Color.Gray, CircleShape)
-                                .shadow(2.dp, CircleShape)
+                // Timeline-like Start and End
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // START row
+                    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                        // Timeline part
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(top = 4.dp, end = 16.dp).fillMaxHeight()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(Color(0xFF4CAF50), CircleShape)
+                                    .shadow(2.dp, CircleShape)
+                            )
+                            // Vertical line
+                            Box(
+                                modifier = Modifier
+                                    .padding(vertical = 4.dp)
+                                    .width(2.dp)
+                                    .weight(1f)
+                                    .background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(1.dp))
+                            )
+                        }
+                        
+                        // Info part
+                        HistoryTimeLocation(
+                            label = strings.sessionStart,
+                            time = session.startTime,
+                            lat = startPoint?.latitude,
+                            lng = startPoint?.longitude,
+                            isStart = true
                         )
                     }
 
-                    // Info part
-                    HistoryTimeLocation(
-                        label = strings.sessionEnd,
-                        time = session.endTime,
-                        lat = endPoint?.latitude,
-                        lng = endPoint?.longitude,
-                        isStart = false
-                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // END row
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        // Timeline part
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(top = 4.dp, end = 16.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(if (session.endTime != null) Color(0xFFF44336) else Color.Gray, CircleShape)
+                                    .shadow(2.dp, CircleShape)
+                            )
+                        }
+
+                        // Info part
+                        HistoryTimeLocation(
+                            label = strings.sessionEnd,
+                            time = session.endTime,
+                            lat = endPoint?.latitude,
+                            lng = endPoint?.longitude,
+                            isStart = false
+                        )
+                    }
                 }
+            }
+
+            // RIGHT: Status and Route Info (Stability Fix: Removed heavy MapView)
+            Column(
+                modifier = Modifier
+                    .weight(0.8f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .clickable { onClick() }
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Map,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = strings.viewHistory,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "${session.points.size} points",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
             }
         }
     }
@@ -828,7 +1003,8 @@ fun MapPreview(
     focusTrigger: Long = 0L,
     cameraState: MapCameraState,
     onCameraChanged: (MapCameraState) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    reviewSession: TrackingSessionHistory? = null
 ) {
     val strings = LocalStrings.current
     
@@ -843,7 +1019,8 @@ fun MapPreview(
                 defaultLatitude = cameraState.latitude,
                 defaultLongitude = cameraState.longitude,
                 cameraState = cameraState,
-                onCameraChanged = onCameraChanged
+                onCameraChanged = onCameraChanged,
+                reviewSession = reviewSession
             )
         } else {
             Box(
