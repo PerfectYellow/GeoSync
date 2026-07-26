@@ -168,6 +168,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                             when (event.type) {
                                 "location.update" -> {
                                     event.location?.let { loc ->
+                                        println("AdminViewModel: Received location update for ${loc.clientId}, online: ${loc.isOnline}")
                                         val normalizedLoc = loc.copy(clientId = loc.clientId.lowercase())
                                         if (_trackedClientIds.value.contains(normalizedLoc.clientId)) {
                                             _locations.update { it + (normalizedLoc.clientId to normalizedLoc) }

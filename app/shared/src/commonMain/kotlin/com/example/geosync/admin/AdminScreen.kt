@@ -27,6 +27,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.datetime.Instant as KInstant
 import kotlinx.datetime.Clock as KClock
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import com.example.geosync.NotificationManager
 import com.example.geosync.LanguageSelector
 import com.example.geosync.localization.LocalStrings
@@ -683,6 +688,63 @@ fun ClientListItem(
     }
 }
 
+@Composable
+fun HistorySheetDragHandle() {
+    val purplePrimary = Color(0xFF8E24AA)
+    val purpleLight = Color(0xFFCE93D8)
+    
+    Column(
+        modifier = Modifier
+            .padding(vertical = 14.dp)
+            .fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .width(56.dp)
+                .height(5.dp)
+                .clip(CircleShape)
+                .background(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            purpleLight.copy(alpha = 0.4f),
+                            purplePrimary,
+                            purpleLight.copy(alpha = 0.4f)
+                        )
+                    )
+                )
+                .shadow(1.dp, CircleShape)
+        )
+    }
+}
+
+/**
+ * A beautiful, modern, and accurate vertical scrollbar for LazyColumn.
+ */
+fun Modifier.verticalScrollbar(
+    state: LazyListState,
+    color: Color = Color(0xFF8E24AA),
+    width: androidx.compose.ui.unit.Dp = 4.dp
+): Modifier = drawWithContent {
+    drawContent()
+    
+    val firstVisibleElementIndex = state.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: return@drawWithContent
+    val totalItemsCount = state.layoutInfo.totalItemsCount
+    if (totalItemsCount == 0) return@drawWithContent
+
+    val viewportHeight = size.height
+    val scrollbarHeight = (viewportHeight / totalItemsCount) * state.layoutInfo.visibleItemsInfo.size
+    val scrollbarOffsetY = (viewportHeight / totalItemsCount) * firstVisibleElementIndex
+
+    // Draw rounded modern scrollbar with a slight offset from edge
+    drawRoundRect(
+        color = color.copy(alpha = 0.7f),
+        topLeft = Offset(size.width - width.toPx() - 4f, scrollbarOffsetY),
+        size = Size(width.toPx(), scrollbarHeight),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryBottomSheet(
@@ -695,11 +757,13 @@ fun HistoryBottomSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val strings = LocalStrings.current
+    val listState = rememberLazyListState()
+    val indicatorPurple = Color(0xFF8E24AA)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        dragHandle = { BottomSheetDefaults.DragHandle() },
+        dragHandle = { HistorySheetDragHandle() },
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
@@ -709,8 +773,23 @@ fun HistoryBottomSheet(
                 .fillMaxWidth()
                 .padding(bottom = 32.dp)
         ) {
+            // Modern Accurate Progress Indicator
+            if (isLoading) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .padding(horizontal = 24.dp)
+                        .clip(CircleShape),
+                    color = indicatorPurple,
+                    trackColor = indicatorPurple.copy(alpha = 0.1f)
+                )
+            } else {
+                Spacer(Modifier.height(3.dp))
+            }
+
             Text(
-                text = strings.trackingHistory,
+                text = if (history.isNotEmpty()) "${strings.trackingHistory} (${history.size})" else strings.trackingHistory,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
@@ -719,7 +798,7 @@ fun HistoryBottomSheet(
             Text(
                 text = clientId,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = indicatorPurple,
                 modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 16.dp)
             )
 
@@ -728,7 +807,7 @@ fun HistoryBottomSheet(
                     modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
+                    CircularProgressIndicator(color = indicatorPurple)
                 }
             } else if (history.isEmpty()) {
                 Box(
@@ -739,7 +818,10 @@ fun HistoryBottomSheet(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScrollbar(listState, indicatorPurple),
                     contentPadding = PaddingValues(horizontal = 16.dp)
                 ) {
                     itemsIndexed(history) { index, session ->

@@ -20,6 +20,9 @@ object TrackingStatus {
     private val _subscribersCount = MutableStateFlow(0)
     val subscribersCount = _subscribersCount.asStateFlow()
 
+    private val _restProgress = MutableStateFlow(0f)
+    val restProgress = _restProgress.asStateFlow()
+
     fun updateStatus(newStatus: ConnectionStatus, error: String? = null) {
         _status.value = newStatus
         _errorMessage.value = error
@@ -27,5 +30,9 @@ object TrackingStatus {
 
     fun updateSubscribers(count: Int) {
         _subscribersCount.value = count
+    }
+
+    fun updateRestProgress(progress: Float) {
+        _restProgress.value = progress
     }
 }

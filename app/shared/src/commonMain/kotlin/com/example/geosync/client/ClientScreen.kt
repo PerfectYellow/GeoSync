@@ -58,6 +58,7 @@ fun ClientScreen(
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val connectionError by viewModel.connectionError.collectAsState()
     val subscribersCount by viewModel.subscribersCount.collectAsState()
+    val restProgress by viewModel.restProgress.collectAsState()
 
     val connectivityObserver = rememberConnectivityObserver()
     val networkStatus by connectivityObserver.observe().collectAsState(ConnectivityStatus.Online)
@@ -103,6 +104,7 @@ fun ClientScreen(
             connectionStatus = connectionStatus,
             connectionError = connectionError,
             subscribersCount = subscribersCount,
+            restProgress = restProgress,
             hasBackgroundPermission = backgroundLocationPermissionState.hasPermission,
             isBatteryOptimized = isBatteryOptimized,
             onToggleTracking = {
@@ -450,6 +452,7 @@ fun ClientScreenContent(
     connectionStatus: ConnectionStatus,
     connectionError: String?,
     subscribersCount: Int = 0,
+    restProgress: Float = 0f,
     hasBackgroundPermission: Boolean = true,
     isBatteryOptimized: Boolean = false,
     onToggleTracking: () -> Unit,
@@ -591,6 +594,7 @@ fun ClientScreenContent(
                         trackingId = trackingId,
                         connectionStatus = connectionStatus,
                         subscribersCount = subscribersCount,
+                        restProgress = restProgress,
                         onStop = onToggleTracking,
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(trackingId))
@@ -870,6 +874,7 @@ private fun TrackingView(
     trackingId: String, 
     connectionStatus: ConnectionStatus,
     subscribersCount: Int,
+    restProgress: Float = 0f,
     onStop: () -> Unit, 
     onCopy: () -> Unit
 ) {
@@ -886,6 +891,16 @@ private fun TrackingView(
                 shape = CircleShape,
                 color = statusColor.copy(alpha = 0.1f)
             ) {}
+
+            if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                CircularProgressIndicator(
+                    progress = { restProgress },
+                    modifier = Modifier.size(100.dp),
+                    color = statusColor,
+                    strokeWidth = 4.dp,
+                    trackColor = Color.Transparent
+                )
+            }
             
             Icon(
                 imageVector = Icons.Default.LocationOn,

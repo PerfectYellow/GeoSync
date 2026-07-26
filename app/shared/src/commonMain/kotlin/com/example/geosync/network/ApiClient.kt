@@ -5,6 +5,7 @@ import io.ktor.client.call.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
+import io.ktor.http.*
 import io.ktor.serialization.kotlinx.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.json.Json
@@ -68,4 +69,31 @@ suspend fun HttpClient.geoLiveWebSocket(block: suspend DefaultClientWebSocketSes
     } else {
         webSocket(host = ApiConfig.HOST, port = ApiConfig.PORT, path = ApiConfig.WS_LIVE_PATH, block = block)
     }
+}
+
+/**
+ * Helper to send location update via REST.
+ */
+suspend fun HttpClient.sendLocationUpdate(clientId: String, latitude: Double, longitude: Double, timestamp: String?): String {
+    val scheme = if (ApiConfig.isSecure) "https" else "http"
+    val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/location/$clientId"
+    return post(url) {
+        contentType(ContentType.Application.Json)
+        setBody(LiveLocationMessage(
+            type = "client.location",
+            clientId = clientId,
+            latitude = latitude,
+            longitude = longitude,
+            timestamp = timestamp
+        ))
+    }.body()
+}
+
+/**
+ * Helper to notify the server that REST tracking has stopped.
+ */
+suspend fun HttpClient.stopLocationTracking(clientId: String): String {
+    val scheme = if (ApiConfig.isSecure) "https" else "http"
+    val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/location/$clientId/stop"
+    return post(url).body()
 }

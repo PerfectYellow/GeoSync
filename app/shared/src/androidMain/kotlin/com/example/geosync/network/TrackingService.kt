@@ -34,6 +34,7 @@ class TrackingService : Service() {
     private lateinit var locationManager: LocationManager
     private var lastLocation: Location? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var currentTrackingId: String? = null
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -80,6 +81,7 @@ class TrackingService : Service() {
         when (intent?.action) {
             "START_TRACKING" -> {
                 val trackingId = intent.getStringExtra("TRACKING_ID") ?: return START_NOT_STICKY
+                currentTrackingId = trackingId
                 val strings = LocalizationManager.strings
                 
                 // ALWAYS call startForeground first to avoid "ForegroundServiceDidNotStartInTimeException"
@@ -152,6 +154,20 @@ class TrackingService : Service() {
                 wakeLock?.acquire(24 * 60 * 60 * 1000L /* 24 hours max */)
             }
             "STOP_TRACKING" -> {
+                val id = currentTrackingId
+                if (id != null && SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                    // Use runBlocking to ensure the stop signal is sent before the service process is potentially killed
+                    // Since it's a simple POST, it should be very fast.
+                    try {
+                        runBlocking {
+                            withContext(Dispatchers.IO) {
+                                geoHttpClient.stopLocationTracking(id)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
                 stopBroadcasting()
                 locationManager.removeUpdates(locationListener)
                 if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -164,70 +180,126 @@ class TrackingService : Service() {
     private fun startBroadcasting(id: String) {
         trackingJob?.cancel()
         trackingJob = serviceScope.launch {
-            val strings = LocalizationManager.strings
-            while (isActive) {
-                try {
-                    TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
-                    geoHttpClient.geoLiveWebSocket {
-                        TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
-                        GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
-                        sendSerialized(LiveLocationMessage(
-                            type = "client.register", 
-                            clientId = id,
-                            deviceUuid = SettingsManager.deviceUuid
-                        ))
-                        
-                        // Listen for incoming messages (like subscriber updates)
-                        val receiveJob = launch {
-                            try {
-                                while (isActive) {
-                                    val event = receiveDeserialized<ServerEvent>()
-                                    if (event.type == "client.subscribers") {
-                                        event.subscribersCount?.let { count ->
-                                            TrackingStatus.updateSubscribers(count)
-                                        }
+            if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                startRestBroadcasting(id)
+            } else {
+                startWebSocketBroadcasting(id)
+            }
+        }
+    }
+
+    private suspend fun CoroutineScope.startWebSocketBroadcasting(id: String) {
+        val strings = LocalizationManager.strings
+        while (isActive) {
+            try {
+                TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
+                geoHttpClient.geoLiveWebSocket {
+                    TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
+                    GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
+                    sendSerialized(LiveLocationMessage(
+                        type = "client.register", 
+                        clientId = id,
+                        deviceUuid = SettingsManager.deviceUuid
+                    ))
+                    
+                    // Listen for incoming messages (like subscriber updates)
+                    val receiveJob = launch {
+                        try {
+                            while (isActive) {
+                                val event = receiveDeserialized<ServerEvent>()
+                                if (event.type == "client.subscribers") {
+                                    event.subscribersCount?.let { count ->
+                                        TrackingStatus.updateSubscribers(count)
                                     }
                                 }
-                            } catch (e: Exception) {
-                                // WebSocket closed or error
                             }
+                        } catch (e: Exception) {
+                            // WebSocket closed or error
                         }
-
-                        while (isActive) {
-                            val location = lastLocation
-                            if (location != null) {
-                                println("GeoSync: Sending location from ${location.provider}: ${location.latitude}, ${location.longitude}")
-                                sendSerialized(LiveLocationMessage(
-                                    type = "client.location",
-                                    clientId = id,
-                                    latitude = location.latitude,
-                                    longitude = location.longitude,
-                                    timestamp = Clock.System.now().toString()
-                                ))
-                            } else {
-                                GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
-                            }
-                            delay(3000)
-                        }
-                        receiveJob.cancel()
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    val errorMsg = strings.connectionFailed(e.message)
-                    TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
-                    GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
-                    // Wait before retrying to connect
-                    delay(5000)
-                } finally {
-                    TrackingStatus.updateSubscribers(0)
+
+                    while (isActive) {
+                        val location = lastLocation
+                        if (location != null) {
+                            println("GeoSync: Sending location from ${location.provider}: ${location.latitude}, ${location.longitude}")
+                            sendSerialized(LiveLocationMessage(
+                                type = "client.location",
+                                clientId = id,
+                                latitude = location.latitude,
+                                longitude = location.longitude,
+                                timestamp = Clock.System.now().toString()
+                            ))
+                        } else {
+                            GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
+                        }
+                        delay(3000)
+                    }
+                    receiveJob.cancel()
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                val errorMsg = strings.connectionFailed(e.message)
+                TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
+                GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
+                // Wait before retrying to connect
+                delay(5000)
+            } finally {
+                TrackingStatus.updateSubscribers(0)
             }
+        }
+    }
+
+    private suspend fun CoroutineScope.startRestBroadcasting(id: String) {
+        val strings = LocalizationManager.strings
+        // For REST, we are "connected" once we start the loop
+        TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
+        GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
+
+        var lastSentLocation: Location? = null
+        var lastSentTime = 0L
+
+        while (isActive) {
+            val location = lastLocation
+            if (location != null) {
+                val now = System.currentTimeMillis()
+                val distance = lastSentLocation?.distanceTo(location) ?: Float.MAX_VALUE
+                val timePassed = now - lastSentTime
+                
+                // Update UI progress (max 30s heartbeat)
+                TrackingStatus.updateRestProgress((timePassed / 30000.0f).coerceIn(0f, 1f))
+                
+                // Optimized criteria: 
+                // 1. Moved > 10m AND accuracy is decent (< 50m)
+                // 2. OR 30 seconds passed (heartbeat)
+                val shouldSend = (distance > 10f && location.accuracy < 50f) || timePassed > 30000L
+
+                if (shouldSend) {
+                    try {
+                        geoHttpClient.sendLocationUpdate(
+                            clientId = id,
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            timestamp = Clock.System.now().toString()
+                        )
+                        lastSentLocation = location
+                        lastSentTime = now
+                        println("GeoSync: Sent REST update. Dist: $distance, Time: $timePassed")
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        // Silent fail for REST, we'll try again next interval
+                    }
+                }
+            } else {
+                GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
+            }
+            delay(2000)
         }
     }
 
     private fun stopBroadcasting() {
         trackingJob?.cancel()
         trackingJob = null
+        TrackingStatus.updateRestProgress(0f)
     }
 
     private fun createNotificationChannel() {
