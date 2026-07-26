@@ -932,23 +932,19 @@ fun HistorySessionItem(
                         )
                     }
                     
-                    Surface(
-                        color = if (isLive) 
-                            Color(0xFFE8F5E9)
-                        else 
-                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(
-                            text = if (isLive) strings.statusLive else strings.statusOffline,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isLive) 
-                                Color(0xFF2E7D32)
-                            else 
-                                MaterialTheme.colorScheme.onSecondaryContainer,
-                            fontWeight = FontWeight.Black
-                        )
+                    if (isLive) {
+                        Surface(
+                            color = Color(0xFFE8F5E9),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                text = strings.statusLive,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color(0xFF2E7D32),
+                                fontWeight = FontWeight.Black
+                            )
+                        }
                     }
                 }
 
@@ -1018,43 +1014,87 @@ fun HistorySessionItem(
                 }
             }
 
-            // RIGHT: Status and Route Info (Stability Fix: Removed heavy MapView)
-            Column(
+            // RIGHT: Map Preview Placeholder
+            Box(
                 modifier = Modifier
-                    .weight(0.8f)
+                    .weight(0.85f)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f),
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            )
+                        )
+                    )
+                    .drawWithContent {
+                        drawContent()
+                        // Draw a subtle grid to simulate map lines
+                        val gridSize = 20.dp.toPx()
+                        val lineColor = Color.Gray.copy(alpha = 0.1f)
+                        for (x in 0 until (size.width / gridSize).toInt()) {
+                            drawLine(lineColor, Offset(x * gridSize, 0f), Offset(x * gridSize, size.height), 1f)
+                        }
+                        for (y in 0 until (size.height / gridSize).toInt()) {
+                            drawLine(lineColor, Offset(0f, y * gridSize), Offset(size.width, y * gridSize), 1f)
+                        }
+                    }
                     .clickable { onClick() }
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                    .padding(12.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                    shape = CircleShape,
-                    modifier = Modifier.size(48.dp)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.Map,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = CircleShape,
+                        modifier = Modifier.size(44.dp).shadow(6.dp, CircleShape),
+                        tonalElevation = 4.dp
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Map,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = strings.viewHistory.uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text(
+                            text = "${session.points.size} points",
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = strings.viewHistory,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "${session.points.size} points",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                
+                // Expand icon to indicate interaction
+                Icon(
+                    Icons.Default.OpenInFull,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
                 )
             }
         }
@@ -1089,23 +1129,30 @@ fun HistoryTimeLocation(label: String, time: String?, lat: Double?, lng: Double?
         }
 
         if (lat != null && lng != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 2.dp)
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.padding(top = 4.dp)
             ) {
-                Icon(
-                    Icons.Default.LocationOn,
-                    contentDescription = null,
-                    modifier = Modifier.size(12.dp),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "${lat.toString().take(8)}, ${lng.toString().take(8)}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(10.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "${lat.toString().take(8)}, ${lng.toString().take(8)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
