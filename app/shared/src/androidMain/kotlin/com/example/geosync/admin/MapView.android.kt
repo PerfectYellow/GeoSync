@@ -60,6 +60,7 @@ import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.MapLibre
 import org.maplibre.android.maps.MapLibreMapOptions
+import android.view.Gravity
 import java.io.File
 import java.io.FileOutputStream
 
@@ -206,7 +207,7 @@ actual fun GoogleMapView(
         ) {
             FilledIconButton(
                 onClick = {
-                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(20.0)))
+                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(19.0)))
                     externalMoveTrigger++
                 },
                 modifier = Modifier.size(44.dp),
@@ -346,7 +347,7 @@ private fun MapLibreMapView(
     val mapView = remember {
         val options = MapLibreMapOptions.createFromAttributes(context, null)
             .localIdeographFontFamily("sans-serif")
-            .textureMode(true) // Texture Mode is safer for Compose layering
+            .textureMode(false) // Texture Mode is safer for Compose layering but can cause blank screens on some devices (e.g. Xiaomi)
 
         org.maplibre.android.maps.MapView(context, options).apply {
             setBackgroundColor(android.graphics.Color.WHITE)
@@ -355,6 +356,10 @@ private fun MapLibreMapView(
                 map.uiSettings.isAttributionEnabled = false
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isCompassEnabled = true
+                map.uiSettings.setCompassGravity(Gravity.TOP or Gravity.START)
+                val density = context.resources.displayMetrics.density
+                map.uiSettings.setCompassMargins((16 * density).toInt(), (100 * density).toInt(), 0, 0)
+                map.setMaxZoomPreference(19.0)
 
                 map.moveCamera(CameraUpdateFactory.newLatLngZoom(
                     LatLng(cameraState.latitude, cameraState.longitude),
@@ -545,6 +550,7 @@ private fun OsmdroidMapView(
             setUseDataConnection(true)
             setBuiltInZoomControls(false)
             setBackgroundColor(android.graphics.Color.WHITE)
+            maxZoomLevel = 19.0
             
             // Texture Mode is better for lists/sheets
             @Suppress("DEPRECATION")
@@ -553,6 +559,8 @@ private fun OsmdroidMapView(
             overlays.add(RotationGestureOverlay(this))
             val compassOverlay = CompassOverlay(context, InternalCompassOrientationProvider(context), this)
             compassOverlay.enableCompass()
+            val density = context.resources.displayMetrics.density
+            compassOverlay.setCompassCenter(32f * density, 100f * density)
             overlays.add(compassOverlay)
 
             controller.setZoom(cameraState.zoom)
@@ -743,12 +751,18 @@ actual fun HistoryReviewMapView(
     val mapView = remember {
         val options = MapLibreMapOptions.createFromAttributes(context, null)
             .localIdeographFontFamily("sans-serif")
+            .textureMode(false)
         
         org.maplibre.android.maps.MapView(context, options).apply {
             setBackgroundColor(android.graphics.Color.WHITE)
             getMapAsync { map ->
                 map.uiSettings.isAttributionEnabled = false
                 map.uiSettings.isLogoEnabled = false
+                map.uiSettings.isCompassEnabled = true
+                map.uiSettings.setCompassGravity(Gravity.TOP or Gravity.START)
+                val density = context.resources.displayMetrics.density
+                map.uiSettings.setCompassMargins((16 * density).toInt(), (100 * density).toInt(), 0, 0)
+                map.setMaxZoomPreference(19.0)
                 
                 map.setStyle(styleUrl) {
                     isStyleReady = true
@@ -852,7 +866,7 @@ actual fun HistoryReviewMapView(
         ) {
             FilledIconButton(
                 onClick = {
-                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(20.0)))
+                    onCameraChanged(cameraState.copy(zoom = (cameraState.zoom + 1).coerceAtMost(19.0)))
                     externalMoveTrigger++
                 },
                 modifier = Modifier.size(44.dp),
@@ -1118,6 +1132,7 @@ actual fun HistoryMapView(
             setBuiltInZoomControls(false)
             setBackgroundColor(android.graphics.Color.WHITE)
             setHasTransientState(true)
+            maxZoomLevel = 19.0
             
             // Use basic Mapnik (OSM)
             setTileProvider(MapTileProviderBasic(context, TileSourceFactory.MAPNIK))

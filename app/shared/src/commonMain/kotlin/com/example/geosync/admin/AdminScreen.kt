@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -151,6 +153,16 @@ fun AdminContent(
     var focusTrigger by remember { mutableStateOf(0L) }
     val strings = LocalStrings.current
 
+    // Zoom level indicator logic
+    var showZoomIndicator by remember { mutableStateOf(false) }
+    val currentZoom = if (reviewSession != null) reviewCameraState.zoom else cameraState.zoom
+    
+    LaunchedEffect(currentZoom) {
+        showZoomIndicator = true
+        kotlinx.coroutines.delay(2000)
+        showZoomIndicator = false
+    }
+
     // Confirmation Dialog
     clientToRemove?.let { id ->
         RemoveClientDialog(
@@ -218,7 +230,6 @@ fun AdminContent(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface) // Prevent black flash
-            .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         // 1. Map in the background (Only visible when not in review mode)
         if (reviewSession == null) {
@@ -239,6 +250,7 @@ fun AdminContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
                     .padding(16.dp)
             ) {
                 // Main Header Card - STABLE SHADOW
@@ -419,30 +431,30 @@ fun AdminContent(
                     }
                 }
             }
-        } else {
-            // 3. Review Mode / Expanded Map Overlay
+        }
+
+        // 3. Review Mode (History Map + Full Screen controls)
+        if (reviewSession != null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surface) // Solid background
+                    .background(MaterialTheme.colorScheme.surface)
             ) {
-                // Dedicated Full-Screen History Map (Isolated high-performance instance)
-                reviewSession?.let { session ->
-                    HistoryReviewMapView(
-                        modifier = Modifier.fillMaxSize(),
-                        session = session,
-                        cameraState = reviewCameraState,
-                        onCameraChanged = onReviewCameraChanged
-                    )
-                }
+                HistoryReviewMapView(
+                    modifier = Modifier.fillMaxSize(),
+                    session = reviewSession,
+                    cameraState = reviewCameraState,
+                    onCameraChanged = onReviewCameraChanged
+                )
 
                 // Overlay Controls
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.statusBars)
                         .padding(16.dp)
                 ) {
-                    // Exit Review / Collapse Map Button
+                    // Exit Review Button
                     Surface(
                         modifier = Modifier.align(Alignment.TopEnd),
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
@@ -450,74 +462,105 @@ fun AdminContent(
                         shadowElevation = 6.dp
                     ) {
                         IconButton(
-                            onClick = { 
-                                if (reviewSession != null) {
-                                    onExitReview()
-                                } else {
-                                    onMapExpandedChange(false)
-                                    onMapToggle(false)
-                                }
-                            },
+                            onClick = { onExitReview() },
                             modifier = Modifier.size(48.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = strings.close,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
+                            Icon(Icons.Default.Close, strings.close, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
 
                     // Review Info Banner
-                    reviewSession?.let { session ->
-                        Surface(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
-                            shape = RoundedCornerShape(16.dp),
-                            shadowElevation = 4.dp
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+                        shape = RoundedCornerShape(16.dp),
+                        shadowElevation = 4.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.History, null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                val distance = session.totalDistanceKm
-                                val distanceText = if (distance < 1.0) {
-                                    "${(distance * 1000).toInt()} m"
-                                } else {
-                                    "${distance.toString().take(4)} km"
-                                }
-                                
-                                val durationText = remember(session) {
-                                    try {
-                                        val startStr = session.startTime ?: return@remember "---"
-                                        val start = KInstant.parse(startStr)
-                                        val endStr = session.endTime
-                                        val end = if (endStr != null) KInstant.parse(endStr) else start // Default to 0 duration if live
-                                        val diff = end - start
-                                        val totalSecs = diff.inWholeSeconds
-                                        if (totalSecs >= 3600) "${totalSecs/3600}h ${(totalSecs%3600)/60}m" 
-                                        else if (totalSecs >= 60) "${totalSecs/60} min" 
-                                        else "${totalSecs}s"
-                                    } catch(_: Exception) { "---" }
-                                }
-                                
-                                val fullDurationText = if (session.endTime == null) "$durationText (Live)" else durationText
-
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(
-                                        text = "$distanceText • $fullDurationText",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Black
-                                    )
-                                }
+                            Icon(Icons.Default.History, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            val distanceText = if (reviewSession.totalDistanceKm < 1.0) {
+                                "${(reviewSession.totalDistanceKm * 1000).toInt()} m"
+                            } else {
+                                "${reviewSession.totalDistanceKm.toString().take(4)} km"
                             }
+                            
+                            val durationText = try {
+                                val start = KInstant.parse(reviewSession.startTime ?: "")
+                                val end = if (reviewSession.endTime != null) KInstant.parse(reviewSession.endTime) else start
+                                val diff = end - start
+                                val totalSecs = diff.inWholeSeconds
+                                if (totalSecs >= 3600) "${totalSecs/3600}h ${(totalSecs%3600)/60}m" 
+                                else if (totalSecs >= 60) "${totalSecs/60} min" 
+                                else "${totalSecs}s"
+                            } catch(_: Exception) { "---" }
+                            
+                            val fullDurationText = if (reviewSession.endTime == null) "$durationText (Live)" else durationText
+
+                            Text(
+                                text = "$distanceText • $fullDurationText",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Black
+                            )
                         }
                     }
                 }
+            }
+        }
+
+        // 4. Expanded Live Map Overlay (ONLY the button, no full-screen Box to block touches)
+        if (isMapExpanded && reviewSession == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(16.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    shape = CircleShape,
+                    shadowElevation = 6.dp
+                ) {
+                    IconButton(
+                        onClick = { 
+                            onMapExpandedChange(false)
+                            onMapToggle(false)
+                        },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(Icons.Default.Close, strings.close, tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+
+        // 5. Zoom Level Indicator
+        AnimatedVisibility(
+            visible = showZoomIndicator,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = if (isMapExpanded || reviewSession != null) 40.dp else 40.dp)
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            ) {
+                Text(
+                    text = "Zoom: ${currentZoom.toString().take(4)}",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
             }
         }
     }
