@@ -35,6 +35,7 @@ class TrackingService : Service() {
     private var lastLocation: Location? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentTrackingId: String? = null
+    private var manualUpdateRequested = false
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -173,6 +174,9 @@ class TrackingService : Service() {
                 if (wakeLock?.isHeld == true) wakeLock?.release()
                 stopSelf()
             }
+            "MANUAL_UPDATE" -> {
+                manualUpdateRequested = true
+            }
         }
         return START_STICKY
     }
@@ -271,7 +275,8 @@ class TrackingService : Service() {
                 // Optimized criteria: 
                 // 1. Moved > 10m AND accuracy is decent (< 50m)
                 // 2. OR 30 seconds passed (heartbeat)
-                val shouldSend = (distance > 10f && location.accuracy < 50f) || timePassed > 30000L
+                // 3. OR manual update requested
+                val shouldSend = manualUpdateRequested || (distance > 10f && location.accuracy < 50f) || timePassed > 30000L
 
                 if (shouldSend) {
                     try {
@@ -279,11 +284,14 @@ class TrackingService : Service() {
                             clientId = id,
                             latitude = location.latitude,
                             longitude = location.longitude,
-                            timestamp = Clock.System.now().toString()
+                            timestamp = Clock.System.now().toString(),
+                            isManual = manualUpdateRequested
                         )
                         lastSentLocation = location
                         lastSentTime = now
-                        println("GeoSync: Sent REST update. Dist: $distance, Time: $timePassed")
+                        TrackingStatus.updateRestProgress(0f)
+                        println("GeoSync: Sent REST update. Manual: $manualUpdateRequested, Dist: $distance, Time: $timePassed")
+                        manualUpdateRequested = false
                     } catch (e: Exception) {
                         e.printStackTrace()
                         // Silent fail for REST, we'll try again next interval

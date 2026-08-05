@@ -74,7 +74,13 @@ suspend fun HttpClient.geoLiveWebSocket(block: suspend DefaultClientWebSocketSes
 /**
  * Helper to send location update via REST.
  */
-suspend fun HttpClient.sendLocationUpdate(clientId: String, latitude: Double, longitude: Double, timestamp: String?): String {
+suspend fun HttpClient.sendLocationUpdate(
+    clientId: String, 
+    latitude: Double, 
+    longitude: Double, 
+    timestamp: String?,
+    isManual: Boolean = false
+): String {
     val scheme = if (ApiConfig.isSecure) "https" else "http"
     val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}/v1/location/$clientId"
     return post(url) {
@@ -84,7 +90,8 @@ suspend fun HttpClient.sendLocationUpdate(clientId: String, latitude: Double, lo
             clientId = clientId,
             latitude = latitude,
             longitude = longitude,
-            timestamp = timestamp
+            timestamp = timestamp,
+            isManual = isManual
         ))
     }.body()
 }

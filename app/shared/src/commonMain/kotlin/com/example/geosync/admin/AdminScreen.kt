@@ -694,7 +694,9 @@ fun ClientListItem(
                     Text(
                         text = shortId,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 1
                     )
                     Spacer(Modifier.width(8.dp))
                     Surface(
@@ -718,7 +720,9 @@ fun ClientListItem(
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White,
-                            fontWeight = FontWeight.Black
+                            fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }

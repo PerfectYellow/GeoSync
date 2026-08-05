@@ -18,7 +18,14 @@ class AndroidLocationTracker(private val context: Context) : LocationTracker {
         val intent = Intent(context, TrackingService::class.java).apply {
             action = "STOP_TRACKING"
         }
-        context.stopService(intent)
+        context.startService(intent)
+    }
+
+    override fun manualUpdate() {
+        val intent = Intent(context, TrackingService::class.java).apply {
+            action = "MANUAL_UPDATE"
+        }
+        context.startService(intent)
     }
 }
 
@@ -33,6 +40,7 @@ actual fun getPlatformTracker(): LocationTracker {
         object : LocationTracker {
             override fun startTracking(trackingId: String) {}
             override fun stopTracking() {}
+            override fun manualUpdate() {}
         }
     } else {
         AndroidLocationTracker(context)

@@ -1,11 +1,12 @@
 package com.example.geosync.client
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -20,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
@@ -33,6 +35,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import com.example.geosync.localization.LocalStrings
 import com.example.geosync.permissions.PermissionNames
 import com.example.geosync.permissions.rememberPermissionState
@@ -126,6 +130,7 @@ fun ClientScreen(
             },
             onShowDeviceDetails = { showDeviceDetails = true },
             onShowConnectionType = { showConnectionTypePicker = true },
+            onManualUpdate = { viewModel.manualUpdate() },
             paddingValues = paddingValues
         )
 
@@ -462,6 +467,7 @@ fun ClientScreenContent(
     onFixBatteryOptimization: () -> Unit = {},
     onShowDeviceDetails: () -> Unit = {},
     onShowConnectionType: () -> Unit = {},
+    onManualUpdate: () -> Unit = {},
     paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -595,6 +601,7 @@ fun ClientScreenContent(
                         connectionStatus = connectionStatus,
                         subscribersCount = subscribersCount,
                         restProgress = restProgress,
+                        onManualUpdate = onManualUpdate,
                         onStop = onToggleTracking,
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(trackingId))
@@ -875,15 +882,39 @@ private fun TrackingView(
     connectionStatus: ConnectionStatus,
     subscribersCount: Int,
     restProgress: Float = 0f,
+    onManualUpdate: () -> Unit,
     onStop: () -> Unit, 
     onCopy: () -> Unit
 ) {
     val strings = LocalStrings.current
+    var lastUpdateMark by remember { mutableStateOf(TimeSource.Monotonic.markNow()) }
+    
+    val scale by animateFloatAsState(
+        targetValue = if (lastUpdateMark.elapsedNow() < 300.milliseconds) 1.2f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "IconScale"
+    )
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .graphicsLayer(scaleX = scale, scaleY = scale)
+                .let { mod ->
+                    if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                        mod.clickable(
+                            indication = ripple(bounded = false, radius = 60.dp),
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {
+                            lastUpdateMark = TimeSource.Monotonic.markNow()
+                            onManualUpdate()
+                        }
+                    } else mod
+                }
+        ) {
             val statusColor = Color(0xFF2E7D32)
             
             Surface(

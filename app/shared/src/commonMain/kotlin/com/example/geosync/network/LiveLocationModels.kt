@@ -11,7 +11,8 @@ data class LiveLocationMessage(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val timestamp: String? = null,
-    val message: String? = null
+    val message: String? = null,
+    val isManual: Boolean? = null
 )
 
 @Serializable

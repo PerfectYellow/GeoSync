@@ -107,6 +107,16 @@ object OfflineMapConfig {
     val osmStyleAssetPath get() = "$ASSET_FOLDER/$OSM_STYLE_NAME"
 }
 
+/**
+ * Configuration for History Map visuals.
+ * Change these values to adjust the appearance of the traveled path.
+ */
+object HistoryMapConfig {
+    const val PATH_THICKNESS = 10f          // Width of the traveled line
+    const val ARROW_INTERVAL_METERS = 4f   // Distance between directional arrows (smaller = more dense)
+    const val ARROW_SIZE_DP = 7f           // Size of each arrow icon
+}
+
 
 @Composable
 actual fun GoogleMapView(
@@ -738,12 +748,6 @@ actual fun HistoryReviewMapView(
     onCameraChanged: (MapCameraState) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val primaryColorArgb = MaterialTheme.colorScheme.primary.toArgb()
-    val clientColor = AdminUtils.getClientColor(session.clientId ?: "")
-    
-    val startColor = 0xFF4CAF50.toInt()
-    val endColor = 0xFFF44336.toInt()
-
     val styleUrl = "asset://${OfflineMapConfig.osmStyleAssetPath}"
     var isStyleReady by remember { mutableStateOf(false) }
     var externalMoveTrigger by remember { mutableLongStateOf(0L) }
@@ -790,34 +794,87 @@ actual fun HistoryReviewMapView(
                 if (points.isNotEmpty()) {
                     val latLngs = points.map { LatLng(it.latitude, it.longitude) }
                     
-                    // 1. Path (Neon Glow) - Only draw if there's significant movement
-                    if (latLngs.size > 2 || session.totalDistanceKm > 0.005) {
-                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
-                            .addAll(latLngs)
-                            .color(android.graphics.Color.argb(60, android.graphics.Color.red(clientColor.toArgb()), android.graphics.Color.green(clientColor.toArgb()), android.graphics.Color.blue(clientColor.toArgb())))
-                            .width(18f))
-                        
-                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
-                            .addAll(latLngs)
-                            .color(clientColor.toArgb())
-                            .width(8f))
-                    }
-
-                    // 2. Start Marker
-                    val startIcon = IconFactory.getInstance(context).fromBitmap(
-                        createModernMarker(context, true, startColor).bitmap
-                    )
-                    map.addMarker(MarkerOptions().position(latLngs.first()).icon(startIcon))
-                    
-                    // 3. End Marker
+                    // 1. Path (Gradient + Dense Continuous Arrows)
                     if (latLngs.size >= 2) {
-                        val endIcon = IconFactory.getInstance(context).fromBitmap(
-                            createModernMarker(context, false, endColor).bitmap
+                        val pathStartColor = 0xFF00E5FF.toInt() // Vibrant Cyan
+                        val pathEndColor = 0xFF651FFF.toInt()   // Deep Indigo/Purple
+                        
+                        val strokeWidth = HistoryMapConfig.PATH_THICKNESS
+                        val density = context.resources.displayMetrics.density
+
+                        // CALCULATE TOTAL DISTANCE FOR EVEN GRADIENT
+                        var totalPathDistance = 0f
+                        for (i in 0 until latLngs.size - 1) {
+                            totalPathDistance += calculateDistance(latLngs[i], latLngs[i+1])
+                        }
+                        
+                        var cumulativeDistance = 0f
+                        
+                        for (i in 0 until latLngs.size - 1) {
+                            val p1 = latLngs[i]
+                            val p2 = latLngs[i + 1]
+                            val segmentDistance = calculateDistance(p1, p2)
+                            
+                            // Calculate color based on physical distance along the road
+                            val ratio = if (totalPathDistance > 0) (cumulativeDistance / totalPathDistance) else (i.toFloat() / (latLngs.size - 1))
+                            val segmentColor = interpolateColor(pathStartColor, pathEndColor, ratio)
+                            
+                            // Draw joint connector (makes it curved and connected)
+                            // We use slightly larger circle (+0.5) to ensure perfect gap filling
+                            val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, segmentColor, strokeWidth + 0.5f))
+                            map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
+                                setTopOffsetPixels(((strokeWidth + 0.5f) * density / 2).toInt())
+                            }
+
+                            // Draw segment
+                            map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                                .add(p1, p2)
+                                .color(segmentColor)
+                                .width(strokeWidth))
+                            
+                            // Add dense continuous directional arrows (Chain style: →...→)
+                            val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
+                            
+                            val bearing = calculateBearing(p1, p2)
+                            val arrowBitmap = createArrowBitmap(context, android.graphics.Color.WHITE, bearing)
+                            val arrowIcon = IconFactory.getInstance(context).fromBitmap(arrowBitmap)
+                            
+                            for (j in 1..arrowsOnThisSegment) {
+                                val progress = j.toFloat() / (arrowsOnThisSegment + 1)
+                                val lat = p1.latitude + (p2.latitude - p1.latitude) * progress
+                                val lng = p1.longitude + (p2.longitude - p1.longitude) * progress
+                                
+                                map.addMarker(MarkerOptions()
+                                    .position(LatLng(lat, lng))
+                                    .icon(arrowIcon)).apply {
+                                    setTopOffsetPixels(((HistoryMapConfig.ARROW_SIZE_DP * density) / 2).toInt())
+                                }
+                            }
+                            
+                            cumulativeDistance += segmentDistance
+                        }
+                        
+                        // 2. Add Start and End markers LAST (Ensures Z-Index top)
+                        val startIcon = IconFactory.getInstance(context).fromBitmap(
+                            createModernMarker(context, true, 0xFF4CAF50.toInt()).bitmap
                         )
-                        map.addMarker(MarkerOptions().position(latLngs.last()).icon(endIcon))
+                        map.addMarker(MarkerOptions()
+                            .position(latLngs.first())
+                            .title("START")
+                            .icon(startIcon))
+                        
+                        if (latLngs.size >= 2) {
+                            val endIcon = IconFactory.getInstance(context).fromBitmap(
+                                createModernMarker(context, false, 0xFFF44336.toInt()).bitmap
+                            )
+                            map.addMarker(MarkerOptions()
+                                .position(latLngs.last())
+                                .title("END")
+                                .icon(endIcon))
+                        }
                     }
                     
-                    // 4. Initial Perfect Zoom
+                    // 3. Initial Perfect Zoom
                     if (latLngs.size > 2 && session.totalDistanceKm > 0.005) {
                         val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
                         latLngs.forEach { boundsBuilder.include(it) }
@@ -1039,6 +1096,86 @@ private fun createTextDrawable(
     tailAtTop: Boolean = false
 ): BitmapDrawable {
     return BitmapDrawable(context.resources, createTextBitmap(context, text, bgColor, tailAtTop))
+}
+
+private fun interpolateColor(color1: Int, color2: Int, ratio: Float): Int {
+    val r = (android.graphics.Color.red(color1) * (1 - ratio) + android.graphics.Color.red(color2) * ratio).toInt()
+    val g = (android.graphics.Color.green(color1) * (1 - ratio) + android.graphics.Color.green(color2) * ratio).toInt()
+    val b = (android.graphics.Color.blue(color1) * (1 - ratio) + android.graphics.Color.blue(color2) * ratio).toInt()
+    return android.graphics.Color.rgb(r, g, b)
+}
+
+private fun calculateBearing(p1: LatLng, p2: LatLng): Float {
+    val results = FloatArray(2)
+    android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, results)
+    return results[1] // results[1] contains the initial bearing
+}
+
+/**
+ * Creates an arrow bitmap centered on its anchor point using transparent padding.
+ */
+private fun createArrowBitmap(context: android.content.Context, color: Int, rotation: Float): Bitmap {
+    val density = context.resources.displayMetrics.density
+    val arrowSize = (HistoryMapConfig.ARROW_SIZE_DP * density).toInt()
+    // To center a marker in MapLibre legacy (anchored at middle-bottom),
+    // we make height twice the size and center content at the middle.
+    val width = arrowSize
+    val height = arrowSize * 2
+    
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density 
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    
+    canvas.save()
+    val centerX = width / 2f
+    val centerY = arrowSize.toFloat()
+    canvas.rotate(rotation, centerX, centerY)
+    
+    val path = android.graphics.Path()
+    val h = arrowSize / 2f
+    // Modern "↑" style arrow centered at (centerX, centerY)
+    path.moveTo(centerX, centerY + h * 0.7f) 
+    path.lineTo(centerX, centerY - h * 0.7f) 
+    path.moveTo(centerX - h * 0.4f, centerY - h * 0.1f) 
+    path.lineTo(centerX, centerY - h * 0.7f) 
+    path.lineTo(centerX + h * 0.4f, centerY - h * 0.1f) 
+    
+    canvas.drawPath(path, paint)
+    canvas.restore()
+    return bitmap
+}
+
+/**
+ * Creates a circle bitmap centered on its anchor point using transparent padding.
+ */
+private fun createCircleBitmap(context: android.content.Context, color: Int, diameter: Float): Bitmap {
+    val density = context.resources.displayMetrics.density
+    // The diameter is passed in the same units as strokeWidth (usually interpreted as DP by MapLibre)
+    val size = (diameter * density).toInt().coerceAtLeast(1)
+    val width = size
+    val height = size * 2 // Double height to allow bottom anchor to hit center
+    
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        style = Paint.Style.FILL
+    }
+    // Draw circle centered at the vertical middle (y = size)
+    canvas.drawCircle(width / 2f, size.toFloat(), size / 2f, paint)
+    return bitmap
+}
+
+private fun calculateDistance(p1: LatLng, p2: LatLng): Float {
+    val results = FloatArray(1)
+    android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, results)
+    return results[0]
 }
 
 @Composable

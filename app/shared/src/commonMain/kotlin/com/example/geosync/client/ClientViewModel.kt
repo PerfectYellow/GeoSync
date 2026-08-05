@@ -67,6 +67,12 @@ class ClientViewModel(private val isPreview: Boolean = false) : ViewModel() {
         }
     }
 
+    fun manualUpdate() {
+        if (connectionStatus.value == ConnectionStatus.CONNECTED) {
+            tracker.manualUpdate()
+        }
+    }
+
     private fun startTracking() {
         val id = _trackingId.value
         tracker.startTracking(id)
