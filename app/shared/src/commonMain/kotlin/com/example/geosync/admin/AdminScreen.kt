@@ -1,5 +1,6 @@
 package com.example.geosync.admin
 
+import androidx.compose.animation.core.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,6 +25,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -152,6 +154,27 @@ fun AdminContent(
     var clientForHistory by remember { mutableStateOf<String?>(null) }
     var focusTrigger by remember { mutableStateOf(0L) }
     val strings = LocalStrings.current
+
+    // Pulsating animation for Full Screen button
+    val infiniteTransition = rememberInfiniteTransition(label = "FullScreenPulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Scale"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "Alpha"
+    )
 
     // Zoom level indicator logic
     var showZoomIndicator by remember { mutableStateOf(false) }
@@ -292,7 +315,11 @@ fun AdminContent(
                                 },
                                 modifier = Modifier
                                     .padding(start = 8.dp)
-                                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
+                                    .graphicsLayer {
+                                        scaleX = pulseScale
+                                        scaleY = pulseScale
+                                    }
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = pulseAlpha), CircleShape)
                                     .size(32.dp)
                             ) {
                                 Icon(
