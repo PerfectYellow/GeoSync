@@ -86,6 +86,10 @@ interface AppStrings {
     val usernamePlaceholder: String
     val deviceInfo: String
     val deviceUuid: String
+    val systemId: String
+    val manufacturer: String
+    val model: String
+    val deviceName: String
     val platform: String
     val appVersion: String
     val copy: String
@@ -195,6 +199,10 @@ object EnStrings : AppStrings {
     override val usernamePlaceholder = "username"
     override val deviceInfo = "Device Information"
     override val deviceUuid = "Device UUID"
+    override val systemId = "System ID"
+    override val manufacturer = "Manufacturer"
+    override val model = "Model"
+    override val deviceName = "Device Name"
     override val platform = "Platform"
     override val appVersion = "App Version"
     override val copy = "Copy"
@@ -304,6 +312,10 @@ object FaStrings : AppStrings {
     override val usernamePlaceholder = "نام کاربری"
     override val deviceInfo = "اطلاعات دستگاه"
     override val deviceUuid = "شناسه دستگاه"
+    override val systemId = "شناسه سیستمی"
+    override val manufacturer = "سازنده"
+    override val model = "مدل"
+    override val deviceName = "نام دستگاه"
     override val platform = "پلتفرم"
     override val appVersion = "نسخه برنامه"
     override val copy = "کپی"

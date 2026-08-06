@@ -379,76 +379,182 @@ fun DeviceDetailsDialog(onDismiss: () -> Unit) {
     val strings = LocalStrings.current
     val clipboardManager = LocalClipboardManager.current
     val deviceUuid = SettingsManager.deviceUuid
-    val platform = getPlatform().name
+    val platform = getPlatform()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                text = strings.deviceInfo,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = strings.deviceInfo,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Column {
-                    Text(
-                        text = strings.deviceUuid,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+            Column(
+                modifier = Modifier.padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Device Name (User named)
+                if (platform.deviceName.isNotBlank()) {
+                    DeviceInfoItem(
+                        label = strings.deviceName,
+                        value = platform.deviceName,
+                        icon = Icons.Default.Person
                     )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            .clickable { clipboardManager.setText(AnnotatedString(deviceUuid)) }
-                            .padding(8.dp)
-                    ) {
-                        Text(
-                            text = deviceUuid,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f)
+                }
+
+                // Manufacturer and Model
+                Row(
+                    modifier = Modifier.fillMaxWidth(), 
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    DeviceInfoItem(
+                        label = strings.manufacturer,
+                        value = platform.manufacturer,
+                        icon = Icons.Default.Business,
+                        modifier = Modifier.weight(1f)
+                    )
+                    DeviceInfoItem(
+                        label = strings.model,
+                        value = platform.model,
+                        icon = Icons.Default.PhoneAndroid,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Platform and App Version
+                Row(
+                    modifier = Modifier.fillMaxWidth(), 
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    DeviceInfoItem(
+                        label = strings.platform,
+                        value = platform.name,
+                        icon = Icons.Default.Settings,
+                        modifier = Modifier.weight(1f)
+                    )
+                    DeviceInfoItem(
+                        label = strings.appVersion,
+                        value = "1.0.0",
+                        icon = Icons.Default.Build,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // System ID
+                if (platform.systemId.isNotBlank()) {
+                    DeviceInfoItem(
+                        label = strings.systemId,
+                        value = platform.systemId,
+                        icon = Icons.Default.Dns
+                    )
+                }
+
+                // UUID Card
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f))
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
+                        .clickable { clipboardManager.setText(AnnotatedString(deviceUuid)) }
+                        .padding(16.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Fingerprint,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
                         )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = strings.deviceUuid,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.weight(1f))
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
                             contentDescription = strings.copy,
                             modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
                         )
                     }
-                }
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text(
-                            text = strings.platform,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(text = platform, style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = strings.appVersion,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(text = "1.0.0", style = MaterialTheme.typography.bodyMedium)
-                    }
+                    Text(
+                        text = deviceUuid,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp),
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text(strings.dismiss)
             }
         },
-        shape = RoundedCornerShape(24.dp),
-        containerColor = MaterialTheme.colorScheme.surface
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp
     )
+}
+
+@Composable
+private fun DeviceInfoItem(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.secondary
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 4.dp),
+                maxLines = 1
+            )
+        }
+    }
 }
 
 @Composable
