@@ -745,8 +745,10 @@ actual fun HistoryReviewMapView(
     modifier: Modifier,
     session: com.example.geosync.network.TrackingSessionHistory,
     cameraState: MapCameraState,
+    focusTrigger: Long,
     onCameraChanged: (MapCameraState) -> Unit,
-    onMapInteraction: () -> Unit
+    onMapInteraction: () -> Unit,
+    onScannedPointChange: (Int?) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val styleUrl = "asset://${OfflineMapConfig.osmStyleAssetPath}"
@@ -788,6 +790,32 @@ actual fun HistoryReviewMapView(
                     if (reason == org.maplibre.android.maps.MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
                         onMapInteraction()
                     }
+                }
+
+                map.addOnMapClickListener { point ->
+                    val points = session.points
+                    if (points.isNotEmpty()) {
+                        var closestIdx = -1
+                        var minDistance = Float.MAX_VALUE
+                        
+                        // Find point closest to tap
+                        for (i in points.indices) {
+                            val p = points[i]
+                            val dist = calculateDistance(point, LatLng(p.latitude, p.longitude))
+                            if (dist < minDistance) {
+                                minDistance = dist
+                                closestIdx = i
+                            }
+                        }
+                        
+                        // If within a reasonable distance (e.g. 100 meters), select it
+                        if (minDistance < 100f) {
+                            onScannedPointChange(closestIdx)
+                        } else {
+                            onScannedPointChange(null) // Clear if too far
+                        }
+                    }
+                    true
                 }
             }
         }
@@ -878,22 +906,22 @@ actual fun HistoryReviewMapView(
         }
     }
 
-    // Initial Auto-Focus logic (Runs only once or when triggered)
-    var initialFocusDone by remember { mutableStateOf(false) }
-    LaunchedEffect(mapLibreMap, isStyleReady, initialFocusDone) {
+    // Initial & Filter-based Auto-Focus logic
+    var lastFocusTrigger by remember { mutableLongStateOf(-1L) }
+    LaunchedEffect(mapLibreMap, isStyleReady, session.points, focusTrigger) {
         val map = mapLibreMap ?: return@LaunchedEffect
-        if (isStyleReady && !initialFocusDone) {
+        if (isStyleReady) {
             val points = session.points
-            if (points.isNotEmpty()) {
+            if (points.isNotEmpty() && (lastFocusTrigger != focusTrigger || lastFocusTrigger == -1L)) {
                 val latLngs = points.map { LatLng(it.latitude, it.longitude) }
-                if (latLngs.size > 2 && session.totalDistanceKm > 0.005) {
+                if (latLngs.size > 2) {
                     val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
                     latLngs.forEach { boundsBuilder.include(it) }
                     map.moveCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 100))
                 } else {
                     map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLngs.first(), 17.0))
                 }
-                initialFocusDone = true
+                lastFocusTrigger = focusTrigger
             }
         }
     }
@@ -962,7 +990,7 @@ actual fun HistoryReviewMapView(
             // Re-focus on trip button
             FilledIconButton(
                 onClick = {
-                    initialFocusDone = false // Trigger the LaunchedEffect logic again
+                    lastFocusTrigger = -2L // Force re-triggering the focus LaunchedEffect
                 },
                 modifier = Modifier.size(44.dp),
                 colors = IconButtonDefaults.filledIconButtonColors(

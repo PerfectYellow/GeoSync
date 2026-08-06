@@ -3,6 +3,7 @@ package com.example.geosync.admin
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +38,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.launch
 import com.example.geosync.NotificationManager
 import com.example.geosync.LanguageSelector
@@ -64,8 +67,13 @@ fun AdminScreen(
     val isHistoryLoading by viewModel.isHistoryLoading.collectAsState()
     val reviewSession by viewModel.reviewSession.collectAsState()
     val reviewRange by viewModel.reviewRange.collectAsState()
+    val reviewFocusTrigger by viewModel.reviewFocusTrigger.collectAsState()
     val isTimelineMinimized by viewModel.isTimelineMinimized.collectAsState()
     val isTimelinePinned by viewModel.isTimelinePinned.collectAsState()
+    val scannedPointIndex by viewModel.scannedPointIndex.collectAsState()
+    val isTimeFilterVisible by viewModel.isTimeFilterVisible.collectAsState()
+    val startTimeFilterInput by viewModel.startTimeFilterInput.collectAsState()
+    val endTimeFilterInput by viewModel.endTimeFilterInput.collectAsState()
 
     // Sync Bottom Bar visibility with Map Expansion state
     LaunchedEffect(isMapExpanded) {
@@ -115,12 +123,21 @@ fun AdminScreen(
             onLoadHistory = { viewModel.loadHistory(it) },
             reviewSession = reviewSession,
             reviewCameraState = reviewCameraState,
+            reviewFocusTrigger = reviewFocusTrigger,
             reviewRange = reviewRange,
             isTimelineMinimized = isTimelineMinimized,
             isTimelinePinned = isTimelinePinned,
+            scannedPointIndex = scannedPointIndex,
+            isTimeFilterVisible = isTimeFilterVisible,
+            startTimeFilterInput = startTimeFilterInput,
+            endTimeFilterInput = endTimeFilterInput,
             onReviewRangeChange = { viewModel.updateReviewRange(it) },
             onTimelineMinimizedChange = { viewModel.setTimelineMinimized(it) },
             onTimelinePinnedChange = { viewModel.setTimelinePinned(it) },
+            onScannedPointChange = { viewModel.updateScannedPoint(it) },
+            onTimeFilterVisibleChange = { viewModel.setTimeFilterVisible(it) },
+            onUpdateTimeFilterInputs = { start, end -> viewModel.updateTimeFilterInputs(start, end) },
+            onApplyTimeFilter = { start, end -> viewModel.applyTimeFilter(start, end) },
             onMapInteraction = { viewModel.handleMapInteraction() },
             onReviewCameraChanged = { viewModel.updateReviewCameraState(it) },
             onEnterReview = { viewModel.enterReviewMode(it) },
@@ -154,12 +171,21 @@ fun AdminContent(
     onLoadHistory: (String) -> Unit = {},
     reviewSession: TrackingSessionHistory? = null,
     reviewCameraState: MapCameraState = MapCameraState(35.6994, 51.3377, 11.0),
+    reviewFocusTrigger: Long = 0L,
     reviewRange: ClosedFloatingPointRange<Float> = 0f..1f,
     isTimelineMinimized: Boolean = false,
     isTimelinePinned: Boolean = false,
+    scannedPointIndex: Int? = null,
+    isTimeFilterVisible: Boolean = false,
+    startTimeFilterInput: String = "",
+    endTimeFilterInput: String = "",
     onReviewRangeChange: (ClosedFloatingPointRange<Float>) -> Unit = {},
     onTimelineMinimizedChange: (Boolean) -> Unit = {},
     onTimelinePinnedChange: (Boolean) -> Unit = {},
+    onScannedPointChange: (Int?) -> Unit = {},
+    onTimeFilterVisibleChange: (Boolean) -> Unit = {},
+    onUpdateTimeFilterInputs: (String, String) -> Unit = { _, _ -> },
+    onApplyTimeFilter: (String, String) -> Unit = { _, _ -> },
     onMapInteraction: () -> Unit = {},
     onReviewCameraChanged: (MapCameraState) -> Unit = {},
     onEnterReview: (TrackingSessionHistory) -> Unit = {},
@@ -489,7 +515,14 @@ fun AdminContent(
                     else {
                         val startIndex = (reviewRange.start * (totalPoints - 1)).toInt().coerceIn(0, totalPoints - 1)
                         val endIndex = (reviewRange.endInclusive * (totalPoints - 1)).toInt().coerceIn(startIndex, totalPoints - 1)
-                        reviewSession.copy(points = reviewSession.points.subList(startIndex, endIndex + 1))
+                        val subPoints = reviewSession.points.subList(startIndex, endIndex + 1)
+                        
+                        reviewSession.copy(
+                            points = subPoints,
+                            startTime = subPoints.firstOrNull()?.timestamp ?: reviewSession.startTime,
+                            endTime = subPoints.lastOrNull()?.timestamp ?: reviewSession.endTime,
+                            totalDistanceKm = AdminUtils.calculatePathDistance(subPoints)
+                        )
                     }
                 }
 
@@ -499,8 +532,10 @@ fun AdminContent(
                         modifier = Modifier.fillMaxSize(),
                         session = session,
                         cameraState = reviewCameraState,
+                        focusTrigger = reviewFocusTrigger,
                         onCameraChanged = onReviewCameraChanged,
-                        onMapInteraction = onMapInteraction
+                        onMapInteraction = onMapInteraction,
+                        onScannedPointChange = onScannedPointChange
                     )
                 }
 
@@ -608,6 +643,25 @@ fun AdminContent(
 
                                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                                         Surface(
+                                                            onClick = { onTimeFilterVisibleChange(!isTimeFilterVisible) },
+                                                            color = if (isTimeFilterVisible) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                            shape = CircleShape,
+                                                            modifier = Modifier.size(32.dp),
+                                                            border = if (!isTimeFilterVisible) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null
+                                                        ) {
+                                                            Box(contentAlignment = Alignment.Center) {
+                                                                Icon(
+                                                                    imageVector = Icons.Default.Schedule,
+                                                                    contentDescription = null,
+                                                                    tint = if (isTimeFilterVisible) Color.White else MaterialTheme.colorScheme.outline,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                            }
+                                                        }
+
+                                                        Spacer(Modifier.width(8.dp))
+
+                                                        Surface(
                                                             onClick = { onTimelinePinnedChange(!isTimelinePinned) },
                                                             color = if (isTimelinePinned) MaterialTheme.colorScheme.primary else Color.Transparent,
                                                             shape = CircleShape,
@@ -626,48 +680,272 @@ fun AdminContent(
                                                     }
                                                 }
                                                 
+                                                AnimatedVisibility(
+                                                    visible = isTimeFilterVisible,
+                                                    enter = expandVertically() + fadeIn(),
+                                                    exit = shrinkVertically() + fadeOut()
+                                                ) {
+                                                    Surface(
+                                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                                        shape = RoundedCornerShape(24.dp),
+                                                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                                                    ) {
+                                                        val initialSessionStartTime = remember(session) {
+                                                            try {
+                                                                val ts = (session.points.firstOrNull()?.timestamp ?: session.startTime ?: "").replace(" ", "T")
+                                                                val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
+                                                                val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                            } catch(_: Exception) { "00:00" }
+                                                        }
+                                                        val initialSessionEndTime = remember(session) {
+                                                            try {
+                                                                val ts = (session.points.lastOrNull()?.timestamp ?: session.endTime ?: "").replace(" ", "T")
+                                                                val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
+                                                                val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                            } catch(_: Exception) { "00:00" }
+                                                        }
+
+                                                        Row(
+                                                            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            val commonTextFieldColors = TextFieldDefaults.colors(
+                                                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                                                focusedIndicatorColor = Color.Transparent,
+                                                                unfocusedIndicatorColor = Color.Transparent,
+                                                                cursorColor = MaterialTheme.colorScheme.primary
+                                                            )
+
+                                                            // Start Time Pill
+                                                            TextField(
+                                                                value = startTimeFilterInput,
+                                                                onValueChange = { 
+                                                                    if (it.length <= 5) onUpdateTimeFilterInputs(it, endTimeFilterInput) 
+                                                                },
+                                                                modifier = Modifier
+                                                                    .weight(1f)
+                                                                    .height(54.dp)
+                                                                    .border(
+                                                                        width = 3.dp,
+                                                                        color = Color(0xFF4CAF50),
+                                                                        shape = RoundedCornerShape(16.dp)
+                                                                    ),
+                                                                placeholder = { 
+                                                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                        Text(initialSessionStartTime, style = MaterialTheme.typography.labelSmall, color = Color(0xFF4CAF50).copy(alpha = 0.6f)) 
+                                                                    }
+                                                                },
+                                                                singleLine = true,
+                                                                shape = RoundedCornerShape(16.dp),
+                                                                colors = commonTextFieldColors,
+                                                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                                                    fontWeight = FontWeight.Black, 
+                                                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                                    color = Color(0xFF4CAF50)
+                                                                ),
+                                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                                                            )
+
+                                                            // End Time Pill
+                                                            TextField(
+                                                                value = endTimeFilterInput,
+                                                                onValueChange = { 
+                                                                    if (it.length <= 5) onUpdateTimeFilterInputs(startTimeFilterInput, it) 
+                                                                },
+                                                                modifier = Modifier
+                                                                    .weight(1f)
+                                                                    .height(54.dp)
+                                                                    .border(
+                                                                        width = 3.dp,
+                                                                        color = Color(0xFFF44336),
+                                                                        shape = RoundedCornerShape(16.dp)
+                                                                    ),
+                                                                placeholder = { 
+                                                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                        Text(initialSessionEndTime, style = MaterialTheme.typography.labelSmall, color = Color(0xFFF44336).copy(alpha = 0.6f)) 
+                                                                    }
+                                                                },
+                                                                singleLine = true,
+                                                                shape = RoundedCornerShape(16.dp),
+                                                                colors = commonTextFieldColors,
+                                                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                                                    fontWeight = FontWeight.Black, 
+                                                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                                    color = Color(0xFFF44336)
+                                                                ),
+                                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text)
+                                                            )
+
+                                                            // Apply Action
+                                                            FilledIconButton(
+                                                                onClick = { onApplyTimeFilter(startTimeFilterInput, endTimeFilterInput) },
+                                                                modifier = Modifier.size(54.dp),
+                                                                shape = RoundedCornerShape(16.dp),
+                                                                colors = IconButtonDefaults.filledIconButtonColors(
+                                                                    containerColor = MaterialTheme.colorScheme.primary
+                                                                )
+                                                            ) {
+                                                                Icon(Icons.Default.Check, null, tint = Color.White)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
                                                 Spacer(Modifier.height(12.dp))
                                                 
                                                 Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                                                     Column {
-                                                        RangeSlider(
-                                                            value = reviewRange,
-                                                            onValueChange = onReviewRangeChange,
-                                                            modifier = Modifier.fillMaxWidth().height(32.dp),
-                                                            startThumb = {
-                                                                // Pure Green Bar Marker - No Background, No Popup
-                                                                Box(
-                                                                    modifier = Modifier
-                                                                        .size(width = 6.dp, height = 28.dp)
-                                                                        .background(Color(0xFF4CAF50), RoundedCornerShape(3.dp))
-                                                                )
-                                                            },
-                                                            endThumb = {
-                                                                // Pure Red Bar Marker - No Background, No Popup
-                                                                Box(
-                                                                    modifier = Modifier
-                                                                        .size(width = 6.dp, height = 28.dp)
-                                                                        .background(Color(0xFFF44336), RoundedCornerShape(3.dp))
-                                                                )
-                                                            },
-                                                            track = { rangeSliderState ->
-                                                                SliderDefaults.Track(
-                                                                    rangeSliderState = rangeSliderState,
-                                                                    modifier = Modifier.height(6.dp),
-                                                                    colors = SliderDefaults.colors(
-                                                                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                                                                        inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                        Box(modifier = Modifier.fillMaxWidth()) {
+                                                            RangeSlider(
+                                                                value = reviewRange,
+                                                                onValueChange = { 
+                                                                    onReviewRangeChange(it)
+                                                                    onScannedPointChange(null) // Clear scanner when manually sliding
+                                                                },
+                                                                modifier = Modifier.fillMaxWidth().height(32.dp),
+                                                                startThumb = {
+                                                                    val startText = remember(session, reviewRange.start) {
+                                                                        try {
+                                                                            val idx = (reviewRange.start * (session.points.size - 1)).toInt().coerceIn(0, session.points.size - 1)
+                                                                            val ts = (session.points[idx].timestamp ?: "").replace(" ", "T")
+                                                                            val iso = ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it }
+                                                                            val inst = KInstant.parse(iso)
+                                                                            val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                            "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                                        } catch(_: Exception) { "" }
+                                                                    }
+
+                                                                    // FORCE TRANSPARENT CONTAINER & EXACT SIZE
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .size(width = 6.dp, height = 48.dp)
+                                                                            .background(Color.Transparent)
+                                                                    ) {
+                                                                        Column(
+                                                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                                                            modifier = Modifier.fillMaxSize()
+                                                                        ) {
+                                                                            Box(
+                                                                                modifier = Modifier
+                                                                                    .size(width = 6.dp, height = 28.dp)
+                                                                                    .background(Color(0xFF4CAF50), RoundedCornerShape(3.dp))
+                                                                            )
+                                                                            if (reviewRange.start > 0.02f) {
+                                                                                Text(
+                                                                                    text = startText,
+                                                                                    color = Color(0xFF4CAF50),
+                                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                                    fontWeight = FontWeight.ExtraBold,
+                                                                                    modifier = Modifier.offset(y = 4.dp)
+                                                                                )
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                },
+                                                                endThumb = {
+                                                                    val endText = remember(session, reviewRange.endInclusive) {
+                                                                        try {
+                                                                            val idx = (reviewRange.endInclusive * (session.points.size - 1)).toInt().coerceIn(0, session.points.size - 1)
+                                                                            val ts = (session.points[idx].timestamp ?: "").replace(" ", "T")
+                                                                            val iso = ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it }
+                                                                            val inst = KInstant.parse(iso)
+                                                                            val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                            "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                                        } catch(_: Exception) { "" }
+                                                                    }
+
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .size(width = 6.dp, height = 48.dp)
+                                                                            .background(Color.Transparent)
+                                                                    ) {
+                                                                        Column(
+                                                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                                                            modifier = Modifier.fillMaxSize()
+                                                                        ) {
+                                                                            Box(
+                                                                                modifier = Modifier
+                                                                                    .size(width = 6.dp, height = 28.dp)
+                                                                                    .background(Color(0xFFF44336), RoundedCornerShape(3.dp))
+                                                                            )
+                                                                            if (reviewRange.endInclusive < 0.98f) {
+                                                                                Text(
+                                                                                    text = endText,
+                                                                                    color = Color(0xFFF44336),
+                                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                                    fontWeight = FontWeight.ExtraBold,
+                                                                                    modifier = Modifier.offset(y = 4.dp)
+                                                                                )
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                },
+                                                                track = { rangeSliderState ->
+                                                                    SliderDefaults.Track(
+                                                                        rangeSliderState = rangeSliderState,
+                                                                        modifier = Modifier.height(6.dp),
+                                                                        colors = SliderDefaults.colors(
+                                                                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                                                                            inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                                        )
                                                                     )
-                                                                )
+                                                                }
+                                                            )
+
+                                                            // 4. SCANNER MARKER (Overlays the Slider)
+                                                            scannedPointIndex?.let { idx ->
+                                                                val total = session.points.size - 1
+                                                                val progress = if (total > 0) idx.toFloat() / total else 0f
+                                                                val scanTimeText = remember(session, idx) {
+                                                                    try {
+                                                                        val ts = (session.points[idx].timestamp ?: "").replace(" ", "T")
+                                                                        val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
+                                                                        val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                        "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                                    } catch(_: Exception) { "" }
+                                                                }
+
+                                                                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(32.dp)) {
+                                                                    val xOffset = maxWidth * progress
+                                                                    Column(
+                                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                                        modifier = Modifier.offset(x = xOffset - 3.dp)
+                                                                    ) {
+                                                                        // Scanner Bar
+                                                                        Box(
+                                                                            modifier = Modifier
+                                                                                .size(width = 4.dp, height = 32.dp)
+                                                                                .background(MaterialTheme.colorScheme.tertiary, RoundedCornerShape(2.dp))
+                                                                        )
+                                                                        // Scanner Time Popup (Centered under the bar)
+                                                                        Surface(
+                                                                            color = MaterialTheme.colorScheme.tertiary,
+                                                                            shape = RoundedCornerShape(4.dp),
+                                                                            modifier = Modifier.offset(y = 4.dp)
+                                                                        ) {
+                                                                            Text(
+                                                                                text = scanTimeText,
+                                                                                color = Color.White,
+                                                                                style = MaterialTheme.typography.labelSmall,
+                                                                                fontWeight = FontWeight.Black,
+                                                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
-                                                        )
+                                                        }
                                                         
                                                         // Static Session Time Labels Row
                                                         Box(modifier = Modifier.fillMaxWidth().height(20.dp).padding(horizontal = 2.dp)) {
                                                             val sessionStartTime = remember(session) {
                                                                 try {
                                                                     val ts = (session.points.firstOrNull()?.timestamp ?: session.startTime ?: "").replace(" ", "T")
-                                                                    val inst = KInstant.parse(ts)
+                                                                    val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
                                                                     val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
                                                                     "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
                                                                 } catch(_: Exception) { "--:--" }
@@ -675,7 +953,7 @@ fun AdminContent(
                                                             val sessionEndTime = remember(session) {
                                                                 try {
                                                                     val ts = (session.points.lastOrNull()?.timestamp ?: session.endTime ?: "").replace(" ", "T")
-                                                                    val inst = KInstant.parse(ts)
+                                                                    val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
                                                                     val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
                                                                     "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
                                                                 } catch(_: Exception) { "--:--" }
@@ -708,32 +986,32 @@ fun AdminContent(
                     }
 
                     // Review Info Banner (Redesigned Floating Style - Ultra Modern)
-                    reviewSession.let { session ->
+                    filteredSession.let { session ->
                         Surface(
                             modifier = Modifier
                                 .align(Alignment.TopCenter)
                                 .windowInsetsPadding(WindowInsets.statusBars)
-                                .padding(top = 8.dp), // Moved up slightly
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                                .padding(top = 8.dp), 
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
                             shape = RoundedCornerShape(32.dp),
-                            shadowElevation = 0.dp,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                            shadowElevation = 4.dp,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
                                     color = MaterialTheme.colorScheme.primary,
                                     shape = CircleShape,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.Route, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                        Icon(Icons.Default.Route, null, modifier = Modifier.size(20.dp), tint = Color.White)
                                     }
                                 }
                                 
-                                Spacer(Modifier.width(12.dp))
+                                Spacer(Modifier.width(16.dp))
                                 
                                 val distanceText = if (session.totalDistanceKm < 1.0) {
                                     "${(session.totalDistanceKm * 1000).toInt()} m"
@@ -755,19 +1033,17 @@ fun AdminContent(
                                         else "${totalSecs}s"
                                     }
                                 } catch(_: Exception) { "---" }
-                                
-                                val fullDurationText = if (session.endTime == null) "$durationText (Live)" else durationText
 
                                 Column {
                                     Text(
-                                        text = "$distanceText Total Path",
+                                        text = "$distanceText Visible Path",
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                                     )
                                     Text(
-                                        text = fullDurationText,
-                                        style = MaterialTheme.typography.titleSmall,
+                                        text = durationText,
+                                        style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Black,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
@@ -1427,14 +1703,14 @@ fun HistoryTimeLocation(label: String, time: String?, lat: Double?, lng: Double?
         
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                text = time?.split("T")?.getOrNull(1)?.take(5) ?: "--:--",
+                text = AdminUtils.formatToLocalTime(time),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = time?.split("T")?.getOrNull(0) ?: "---",
+                text = AdminUtils.formatToLocalDate(time),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp)

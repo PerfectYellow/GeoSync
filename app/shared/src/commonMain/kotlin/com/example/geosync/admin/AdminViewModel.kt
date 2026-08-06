@@ -10,6 +10,8 @@ import com.example.geosync.network.*
 import io.ktor.client.plugins.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.datetime.Clock
+import kotlinx.datetime.*
 
 enum class MapMode {
     OPEN_STREET, MAP_IR, INTERNAL, OFFLINE
@@ -70,6 +72,21 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
     private val _isTimelinePinned = MutableStateFlow(false)
     val isTimelinePinned: StateFlow<Boolean> = _isTimelinePinned.asStateFlow()
+
+    private val _scannedPointIndex = MutableStateFlow<Int?>(null)
+    val scannedPointIndex: StateFlow<Int?> = _scannedPointIndex.asStateFlow()
+
+    private val _isTimeFilterVisible = MutableStateFlow(false)
+    val isTimeFilterVisible: StateFlow<Boolean> = _isTimeFilterVisible.asStateFlow()
+
+    private val _startTimeFilterInput = MutableStateFlow("")
+    val startTimeFilterInput: StateFlow<String> = _startTimeFilterInput.asStateFlow()
+
+    private val _endTimeFilterInput = MutableStateFlow("")
+    val endTimeFilterInput: StateFlow<String> = _endTimeFilterInput.asStateFlow()
+
+    private val _reviewFocusTrigger = MutableStateFlow(0L)
+    val reviewFocusTrigger: StateFlow<Long> = _reviewFocusTrigger.asStateFlow()
 
     private var lastOnlineMode = MapMode.OPEN_STREET
 
@@ -281,7 +298,13 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         viewModelScope.launch {
             _isHistoryLoading.value = true
             try {
-                val history = client.fetchClientHistory(clientId).map { it.copy(clientId = clientId) }
+                val history = client.fetchClientHistory(clientId).map { session ->
+                    // Ensure points within each session are sorted by time for consistent slider/map logic
+                    session.copy(
+                        clientId = clientId,
+                        points = session.points.sortedBy { it.timestamp }
+                    )
+                }
                 _historyState.update { it + (clientId to history) }
             } catch (e: Exception) {
                 println("❌ Failed to load history for $clientId: ${e.message}")
@@ -292,9 +315,17 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     }
 
     fun enterReviewMode(session: TrackingSessionHistory) {
-        _reviewSession.value = session
+        val sortedSession = session.copy(points = session.points.sortedBy { it.timestamp })
+        _reviewSession.value = sortedSession
         _reviewRange.value = 0f..1f
         _isMapExpanded.value = true
+        
+        // Initialize input fields with actual session boundaries (converted to Local)
+        val firstPoint = sortedSession.points.firstOrNull()
+        val lastPoint = sortedSession.points.lastOrNull()
+        
+        _startTimeFilterInput.value = AdminUtils.formatToLocalTime(firstPoint?.timestamp ?: sortedSession.startTime)
+        _endTimeFilterInput.value = AdminUtils.formatToLocalTime(lastPoint?.timestamp ?: sortedSession.endTime)
     }
 
     fun exitReviewMode() {
@@ -306,6 +337,20 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
     fun updateReviewRange(range: ClosedFloatingPointRange<Float>) {
         _reviewRange.value = range
+        
+        // SYNC: Update text fields as the user slides
+        val session = _reviewSession.value ?: return
+        val points = session.points
+        if (points.size < 2) return
+        
+        try {
+            val total = points.size - 1
+            val sIdx = (range.start * total).toInt().coerceIn(0, total)
+            val eIdx = (range.endInclusive * total).toInt().coerceIn(0, total)
+            
+            _startTimeFilterInput.value = AdminUtils.formatToLocalTime(points[sIdx].timestamp)
+            _endTimeFilterInput.value = AdminUtils.formatToLocalTime(points[eIdx].timestamp)
+        } catch(e: Exception) {}
     }
 
     fun setTimelineMinimized(minimized: Boolean) {
@@ -314,6 +359,133 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
     fun setTimelinePinned(pinned: Boolean) {
         _isTimelinePinned.value = pinned
+    }
+
+    fun updateScannedPoint(index: Int?) {
+        _scannedPointIndex.value = index
+    }
+
+    fun setTimeFilterVisible(visible: Boolean) {
+        _isTimeFilterVisible.value = visible
+    }
+
+    fun updateTimeFilterInputs(start: String, end: String) {
+        _startTimeFilterInput.value = start
+        _endTimeFilterInput.value = end
+    }
+
+    fun applyTimeFilter(startTime: String, endTime: String) {
+        val session = _reviewSession.value ?: return
+        val points = session.points
+        if (points.isEmpty()) return
+
+        val strings = LocalizationManager.strings
+
+        fun parseInputToSeconds(input: String): Int? {
+            val trimmed = input.trim()
+            if (trimmed.isEmpty()) return null
+            val parts = trimmed.split(":", ".", " ", "-")
+            return try {
+                val hour: Int
+                val minute: Int
+                if (parts.size == 1) {
+                    val v = parts[0].toInt()
+                    if (v in 0..24) { hour = v; minute = 0 }
+                    else { hour = v / 100; minute = v % 100 }
+                } else {
+                    hour = parts[0].toInt()
+                    val mPart = parts[1]
+                    minute = if (mPart.length == 1 && !mPart.startsWith("0")) mPart.toInt() * 10 else mPart.toInt()
+                }
+                if (hour in 0..23 && minute in 0..59) {
+                    hour * 3600 + minute * 60
+                } else null
+            } catch (e: Exception) { null }
+        }
+
+        val targetStartSecs = parseInputToSeconds(startTime)
+        val targetEndSecs = parseInputToSeconds(endTime)
+
+        if (targetStartSecs == null || targetEndSecs == null) {
+            NotificationManager.show(strings.invalidTimeFormat, NotificationType.ERROR)
+            return
+        }
+
+        if (targetStartSecs >= targetEndSecs) {
+            NotificationManager.show(strings.startTimeAfterEndTime, NotificationType.ERROR)
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val allPoints = points.sortedBy { it.timestamp }
+                
+                fun getLocalPointSecs(ts: String?): Int {
+                    if (ts == null || ts.isBlank()) return -1
+                    return try {
+                        val iso = ts.replace(" ", "T").let { 
+                            if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it 
+                        }
+                        val inst = Instant.parse(iso)
+                        // CRITICAL: Convert to Local Time before calculating seconds
+                        val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                        local.hour * 3600 + local.minute * 60 + local.second
+                    } catch (e: Exception) { -1 }
+                }
+
+                var startIdx = 0
+                var endIdx = allPoints.size - 1
+                var minStartDiff = Int.MAX_VALUE
+                var minEndDiff = Int.MAX_VALUE
+                
+                var foundStartLocalSecs = -1
+                var foundEndLocalSecs = -1
+
+                // Nearest Point Algorithm
+                for (i in allPoints.indices) {
+                    val pSecs = getLocalPointSecs(allPoints[i].timestamp)
+                    if (pSecs == -1) continue
+                    
+                    val sDiff = kotlin.math.abs(pSecs - targetStartSecs)
+                    if (sDiff < minStartDiff) {
+                        minStartDiff = sDiff
+                        startIdx = i
+                        foundStartLocalSecs = pSecs
+                    }
+                    
+                    val eDiff = kotlin.math.abs(pSecs - targetEndSecs)
+                    if (eDiff < minEndDiff) {
+                        minEndDiff = eDiff
+                        endIdx = i
+                        foundEndLocalSecs = pSecs
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (foundStartLocalSecs != -1 && foundEndLocalSecs != -1) {
+                        val total = (allPoints.size - 1).toFloat().coerceAtLeast(1.0f)
+                        val newStart = (startIdx.toFloat() / total).coerceIn(0f, 1f)
+                        val newEnd = (endIdx.toFloat() / total).coerceIn(newStart, 1f)
+                        
+                        _reviewRange.value = newStart..newEnd
+                        
+                        _startTimeFilterInput.value = AdminUtils.formatToLocalTime(allPoints[startIdx].timestamp)
+                        _endTimeFilterInput.value = AdminUtils.formatToLocalTime(allPoints[endIdx].timestamp)
+                        
+                        _reviewSession.update { it?.copy(sessionTag = "f_${kotlinx.datetime.Clock.System.now().toEpochMilliseconds()}") }
+                        _reviewFocusTrigger.value += 1
+                        
+                        NotificationManager.show(strings.timeFilterApplied, NotificationType.SUCCESS)
+                    } else {
+                        NotificationManager.show(strings.noDataInTimeRange, NotificationType.ERROR)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    NotificationManager.show(strings.failedToApplyTimeFilter(e.message), NotificationType.ERROR)
+                }
+            }
+        }
     }
 
     fun handleMapInteraction() {

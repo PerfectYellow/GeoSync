@@ -102,6 +102,14 @@ interface AppStrings {
     val sessionStart: String
     val sessionEnd: String
     val noHistoryFound: String
+    val invalidTimeFormat: String
+    val startTimeAfterEndTime: String
+    val timeFilterApplied: String
+    val noDataInTimeRange: String
+    val failedToApplyTimeFilter: (String?) -> String
+    val enterStartTime: String
+    val enterEndTime: String
+    val apply: String
 }
 
 object EnStrings : AppStrings {
@@ -202,6 +210,14 @@ object EnStrings : AppStrings {
     override val sessionStart = "Start"
     override val sessionEnd = "End"
     override val noHistoryFound = "No history found for this client"
+    override val invalidTimeFormat = "Invalid time format. Use HH:mm"
+    override val startTimeAfterEndTime = "Start time must be before end time"
+    override val timeFilterApplied = "Time filter applied"
+    override val noDataInTimeRange = "No data found for the selected time range"
+    override val failedToApplyTimeFilter: (String?) -> String = { msg -> "Failed to apply filter: $msg" }
+    override val enterStartTime = "Start (HH:mm)"
+    override val enterEndTime = "End (HH:mm)"
+    override val apply = "Apply"
 }
 
 object FaStrings : AppStrings {
@@ -302,6 +318,14 @@ object FaStrings : AppStrings {
     override val sessionStart = "شروع"
     override val sessionEnd = "پایان"
     override val noHistoryFound = "تاریخچه‌ای برای این کاربر یافت نشد"
+    override val invalidTimeFormat = "فرمت زمان نامعتبر است. از HH:mm استفاده کنید"
+    override val startTimeAfterEndTime = "زمان شروع باید قبل از زمان پایان باشد"
+    override val timeFilterApplied = "فیلتر زمانی اعمال شد"
+    override val noDataInTimeRange = "داده‌ای در بازه زمانی انتخاب شده یافت نشد"
+    override val failedToApplyTimeFilter: (String?) -> String = { msg -> "اعمال فیلتر ناموفق بود: $msg" }
+    override val enterStartTime = "شروع (HH:mm)"
+    override val enterEndTime = "پایان (HH:mm)"
+    override val apply = "اعمال"
 }
 
 enum class Language(val code: String, val label: String, val flag: String) {

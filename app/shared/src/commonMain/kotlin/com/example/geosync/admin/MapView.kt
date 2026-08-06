@@ -31,6 +31,8 @@ expect fun HistoryReviewMapView(
     modifier: Modifier,
     session: com.example.geosync.network.TrackingSessionHistory,
     cameraState: MapCameraState,
+    focusTrigger: Long = 0L,
     onCameraChanged: (MapCameraState) -> Unit,
-    onMapInteraction: () -> Unit
+    onMapInteraction: () -> Unit,
+    onScannedPointChange: (Int?) -> Unit = {}
 )
