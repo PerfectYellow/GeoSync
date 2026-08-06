@@ -104,6 +104,7 @@ interface AppStrings {
     val noHistoryFound: String
     val invalidTimeFormat: String
     val startTimeAfterEndTime: String
+    val timeRangeOutOfSession: String
     val timeFilterApplied: String
     val noDataInTimeRange: String
     val failedToApplyTimeFilter: (String?) -> String
@@ -212,6 +213,7 @@ object EnStrings : AppStrings {
     override val noHistoryFound = "No history found for this client"
     override val invalidTimeFormat = "Invalid time format. Use HH:mm"
     override val startTimeAfterEndTime = "Start time must be before end time"
+    override val timeRangeOutOfSession = "Entered time range is outside this session's actual duration"
     override val timeFilterApplied = "Time filter applied"
     override val noDataInTimeRange = "No data found for the selected time range"
     override val failedToApplyTimeFilter: (String?) -> String = { msg -> "Failed to apply filter: $msg" }
@@ -320,6 +322,7 @@ object FaStrings : AppStrings {
     override val noHistoryFound = "تاریخچه‌ای برای این کاربر یافت نشد"
     override val invalidTimeFormat = "فرمت زمان نامعتبر است. از HH:mm استفاده کنید"
     override val startTimeAfterEndTime = "زمان شروع باید قبل از زمان پایان باشد"
+    override val timeRangeOutOfSession = "محدوده زمانی وارد شده خارج از بازه این نشست است"
     override val timeFilterApplied = "فیلتر زمانی اعمال شد"
     override val noDataInTimeRange = "داده‌ای در بازه زمانی انتخاب شده یافت نشد"
     override val failedToApplyTimeFilter: (String?) -> String = { msg -> "اعمال فیلتر ناموفق بود: $msg" }

@@ -398,7 +398,8 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                 } else {
                     hour = parts[0].toInt()
                     val mPart = parts[1]
-                    minute = if (mPart.length == 1 && !mPart.startsWith("0")) mPart.toInt() * 10 else mPart.toInt()
+                    // Fix: Treated single digit as literal minute (e.g. "3" -> 03), not 10x (30)
+                    minute = mPart.toInt()
                 }
                 if (hour in 0..23 && minute in 0..59) {
                     hour * 3600 + minute * 60
@@ -421,19 +422,57 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
         viewModelScope.launch(Dispatchers.Default) {
             try {
-                val allPoints = points.sortedBy { it.timestamp }
+                val allPoints = points.sortedBy { it.timestamp ?: it.receivedAt }
                 
-                fun getLocalPointSecs(ts: String?): Int {
+                fun getLocalPointSecs(p: com.example.geosync.network.HistoryPoint): Int {
+                    val ts = p.timestamp ?: p.receivedAt
                     if (ts == null || ts.isBlank()) return -1
+                    
+                    // Handle Unix timestamp (number as string)
+                    if (ts.all { it.isDigit() || it == '.' }) {
+                        return try {
+                            val seconds = ts.toDouble().toLong()
+                            val instant = Instant.fromEpochSeconds(seconds)
+                            val local = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+                            local.hour * 3600 + local.minute * 60 + local.second
+                        } catch (e: Exception) { -1 }
+                    }
+
                     return try {
                         val iso = ts.replace(" ", "T").let { 
                             if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it 
                         }
                         val inst = Instant.parse(iso)
-                        // CRITICAL: Convert to Local Time before calculating seconds
                         val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
                         local.hour * 3600 + local.minute * 60 + local.second
                     } catch (e: Exception) { -1 }
+                }
+
+                val sessionStartSecs = getLocalPointSecs(allPoints.first())
+                val sessionEndSecs = getLocalPointSecs(allPoints.last())
+
+                // "In Range" Check with midnight-crossing awareness
+                if (sessionStartSecs != -1 && sessionEndSecs != -1) {
+                    val sStart = sessionStartSecs
+                    val sEnd = if (sessionEndSecs < sessionStartSecs) sessionEndSecs + 86400 else sessionEndSecs
+                    
+                    var rStart = targetStartSecs
+                    var rEnd = if (targetEndSecs < targetStartSecs) targetEndSecs + 86400 else targetEndSecs
+                    
+                    // If the requested range seems to be shifted by a day (e.g. session 23:00-01:00, req 23:30-00:30)
+                    // We need to normalize them.
+                    if (rEnd < sStart && (rEnd + 86400) >= sStart) {
+                        rStart += 86400
+                        rEnd += 86400
+                    }
+
+                    // Strict range check: the requested window must be WITHIN the session
+                    if (rStart < sStart || rEnd > sEnd) {
+                        withContext(Dispatchers.Main) {
+                            NotificationManager.show(strings.timeRangeOutOfSession, NotificationType.ERROR)
+                        }
+                        return@launch
+                    }
                 }
 
                 var startIdx = 0
@@ -446,7 +485,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
                 // Nearest Point Algorithm
                 for (i in allPoints.indices) {
-                    val pSecs = getLocalPointSecs(allPoints[i].timestamp)
+                    val pSecs = getLocalPointSecs(allPoints[i])
                     if (pSecs == -1) continue
                     
                     val sDiff = kotlin.math.abs(pSecs - targetStartSecs)
@@ -472,8 +511,11 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                         
                         _reviewRange.value = newStart..newEnd
                         
-                        _startTimeFilterInput.value = AdminUtils.formatToLocalTime(allPoints[startIdx].timestamp)
-                        _endTimeFilterInput.value = AdminUtils.formatToLocalTime(allPoints[endIdx].timestamp)
+                        val finalStartTs = allPoints[startIdx].timestamp ?: allPoints[startIdx].receivedAt
+                        val finalEndTs = allPoints[endIdx].timestamp ?: allPoints[endIdx].receivedAt
+                        
+                        _startTimeFilterInput.value = AdminUtils.formatToLocalTime(finalStartTs)
+                        _endTimeFilterInput.value = AdminUtils.formatToLocalTime(finalEndTs)
                         
                         _reviewSession.update { it?.copy(sessionTag = "f_${kotlinx.datetime.Clock.System.now().toEpochMilliseconds()}") }
                         _reviewFocusTrigger.value += 1
