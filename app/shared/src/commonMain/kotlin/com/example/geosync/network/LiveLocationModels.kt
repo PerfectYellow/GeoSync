@@ -54,3 +54,12 @@ data class HistoryPoint(
     val timestamp: String? = null,
     val receivedAt: String? = null
 )
+
+@Serializable
+data class HistoryPage(
+    val sessions: List<TrackingSessionHistory>,
+    val page: Int,
+    val per: Int,
+    val total: Int,
+    val hasMore: Boolean
+)

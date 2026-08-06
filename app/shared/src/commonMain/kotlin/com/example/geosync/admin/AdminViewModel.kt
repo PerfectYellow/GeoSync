@@ -62,6 +62,15 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _reviewSession = MutableStateFlow<TrackingSessionHistory?>(null)
     val reviewSession: StateFlow<TrackingSessionHistory?> = _reviewSession.asStateFlow()
 
+    private val _reviewRange = MutableStateFlow<ClosedFloatingPointRange<Float>>(0f..1f)
+    val reviewRange: StateFlow<ClosedFloatingPointRange<Float>> = _reviewRange.asStateFlow()
+
+    private val _isTimelineMinimized = MutableStateFlow(false)
+    val isTimelineMinimized: StateFlow<Boolean> = _isTimelineMinimized.asStateFlow()
+
+    private val _isTimelinePinned = MutableStateFlow(false)
+    val isTimelinePinned: StateFlow<Boolean> = _isTimelinePinned.asStateFlow()
+
     private var lastOnlineMode = MapMode.OPEN_STREET
 
     private var connectionJob: Job? = null
@@ -284,13 +293,33 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
     fun enterReviewMode(session: TrackingSessionHistory) {
         _reviewSession.value = session
+        _reviewRange.value = 0f..1f
         _isMapExpanded.value = true
     }
 
     fun exitReviewMode() {
         _reviewSession.value = null
+        _reviewRange.value = 0f..1f
         _isMapExpanded.value = false
         _isListExpanded.value = true
+    }
+
+    fun updateReviewRange(range: ClosedFloatingPointRange<Float>) {
+        _reviewRange.value = range
+    }
+
+    fun setTimelineMinimized(minimized: Boolean) {
+        _isTimelineMinimized.value = minimized
+    }
+
+    fun setTimelinePinned(pinned: Boolean) {
+        _isTimelinePinned.value = pinned
+    }
+
+    fun handleMapInteraction() {
+        if (!_isTimelinePinned.value && !_isTimelineMinimized.value) {
+            _isTimelineMinimized.value = true
+        }
     }
 
     fun updateReviewCameraState(state: MapCameraState) {

@@ -745,12 +745,14 @@ actual fun HistoryReviewMapView(
     modifier: Modifier,
     session: com.example.geosync.network.TrackingSessionHistory,
     cameraState: MapCameraState,
-    onCameraChanged: (MapCameraState) -> Unit
+    onCameraChanged: (MapCameraState) -> Unit,
+    onMapInteraction: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val styleUrl = "asset://${OfflineMapConfig.osmStyleAssetPath}"
     var isStyleReady by remember { mutableStateOf(false) }
     var externalMoveTrigger by remember { mutableLongStateOf(0L) }
+    var mapLibreMap by remember { mutableStateOf<org.maplibre.android.maps.MapLibreMap?>(null) }
 
     val mapView = remember {
         val options = MapLibreMapOptions.createFromAttributes(context, null)
@@ -760,6 +762,7 @@ actual fun HistoryReviewMapView(
         org.maplibre.android.maps.MapView(context, options).apply {
             setBackgroundColor(android.graphics.Color.WHITE)
             getMapAsync { map ->
+                mapLibreMap = map
                 map.uiSettings.isAttributionEnabled = false
                 map.uiSettings.isLogoEnabled = false
                 map.uiSettings.isCompassEnabled = true
@@ -780,110 +783,117 @@ actual fun HistoryReviewMapView(
                         }
                     }
                 }
+
+                map.addOnCameraMoveStartedListener { reason ->
+                    if (reason == org.maplibre.android.maps.MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                        onMapInteraction()
+                    }
+                }
             }
         }
     }
 
-    // Initial Auto-Focus logic
-    var initialFocusDone by remember { mutableStateOf(false) }
-    LaunchedEffect(mapView, session, isStyleReady) {
-        if (isStyleReady && !initialFocusDone) {
-            mapView.getMapAsync { map ->
-                map.clear()
-                val points = session.points
-                if (points.isNotEmpty()) {
-                    val latLngs = points.map { LatLng(it.latitude, it.longitude) }
+    // Drawing Logic (Reacts to session/points updates)
+    LaunchedEffect(mapLibreMap, session, isStyleReady) {
+        val map = mapLibreMap ?: return@LaunchedEffect
+        if (isStyleReady) {
+            map.clear()
+            val points = session.points
+            if (points.isNotEmpty()) {
+                val latLngs = points.map { LatLng(it.latitude, it.longitude) }
+                
+                // 1. Path (Gradient + Dense Continuous Arrows)
+                if (latLngs.size >= 2) {
+                    val pathStartColor = 0xFF00E5FF.toInt() // Vibrant Cyan
+                    val pathEndColor = 0xFF651FFF.toInt()   // Deep Indigo/Purple
                     
-                    // 1. Path (Gradient + Dense Continuous Arrows)
+                    val strokeWidth = HistoryMapConfig.PATH_THICKNESS
+                    val density = context.resources.displayMetrics.density
+
+                    var totalPathDistance = 0f
+                    for (i in 0 until latLngs.size - 1) {
+                        totalPathDistance += calculateDistance(latLngs[i], latLngs[i+1])
+                    }
+                    
+                    var cumulativeDistance = 0f
+                    
+                    for (i in 0 until latLngs.size - 1) {
+                        val p1 = latLngs[i]
+                        val p2 = latLngs[i + 1]
+                        val segmentDistance = calculateDistance(p1, p2)
+                        
+                        val ratio = if (totalPathDistance > 0) (cumulativeDistance / totalPathDistance) else (i.toFloat() / (latLngs.size - 1))
+                        val segmentColor = interpolateColor(pathStartColor, pathEndColor, ratio)
+                        
+                        val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, segmentColor, strokeWidth + 0.5f))
+                        map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
+                            setTopOffsetPixels(((strokeWidth + 0.5f) * density / 2).toInt())
+                        }
+
+                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                            .add(p1, p2)
+                            .color(segmentColor)
+                            .width(strokeWidth))
+                        
+                        val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
+                        
+                        val bearing = calculateBearing(p1, p2)
+                        val arrowBitmap = createArrowBitmap(context, android.graphics.Color.WHITE, bearing)
+                        val arrowIcon = IconFactory.getInstance(context).fromBitmap(arrowBitmap)
+                        
+                        for (j in 1..arrowsOnThisSegment) {
+                            val progress = j.toFloat() / (arrowsOnThisSegment + 1)
+                            val lat = p1.latitude + (p2.latitude - p1.latitude) * progress
+                            val lng = p1.longitude + (p2.longitude - p1.longitude) * progress
+                            
+                            map.addMarker(MarkerOptions()
+                                .position(LatLng(lat, lng))
+                                .icon(arrowIcon)).apply {
+                                setTopOffsetPixels(((HistoryMapConfig.ARROW_SIZE_DP * density) / 2).toInt())
+                            }
+                        }
+                        cumulativeDistance += segmentDistance
+                    }
+                    
+                    // 2. Add Start and End markers LAST (Ensures Z-Index top)
+                    val startIcon = IconFactory.getInstance(context).fromBitmap(
+                        createModernMarker(context, true, 0xFF4CAF50.toInt()).bitmap
+                    )
+                    map.addMarker(MarkerOptions()
+                        .position(latLngs.first())
+                        .title("START")
+                        .icon(startIcon))
+                    
                     if (latLngs.size >= 2) {
-                        val pathStartColor = 0xFF00E5FF.toInt() // Vibrant Cyan
-                        val pathEndColor = 0xFF651FFF.toInt()   // Deep Indigo/Purple
-                        
-                        val strokeWidth = HistoryMapConfig.PATH_THICKNESS
-                        val density = context.resources.displayMetrics.density
-
-                        // CALCULATE TOTAL DISTANCE FOR EVEN GRADIENT
-                        var totalPathDistance = 0f
-                        for (i in 0 until latLngs.size - 1) {
-                            totalPathDistance += calculateDistance(latLngs[i], latLngs[i+1])
-                        }
-                        
-                        var cumulativeDistance = 0f
-                        
-                        for (i in 0 until latLngs.size - 1) {
-                            val p1 = latLngs[i]
-                            val p2 = latLngs[i + 1]
-                            val segmentDistance = calculateDistance(p1, p2)
-                            
-                            // Calculate color based on physical distance along the road
-                            val ratio = if (totalPathDistance > 0) (cumulativeDistance / totalPathDistance) else (i.toFloat() / (latLngs.size - 1))
-                            val segmentColor = interpolateColor(pathStartColor, pathEndColor, ratio)
-                            
-                            // Draw joint connector (makes it curved and connected)
-                            // We use slightly larger circle (+0.5) to ensure perfect gap filling
-                            val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, segmentColor, strokeWidth + 0.5f))
-                            map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
-                                setTopOffsetPixels(((strokeWidth + 0.5f) * density / 2).toInt())
-                            }
-
-                            // Draw segment
-                            map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
-                                .add(p1, p2)
-                                .color(segmentColor)
-                                .width(strokeWidth))
-                            
-                            // Add dense continuous directional arrows (Chain style: →...→)
-                            val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
-                            
-                            val bearing = calculateBearing(p1, p2)
-                            val arrowBitmap = createArrowBitmap(context, android.graphics.Color.WHITE, bearing)
-                            val arrowIcon = IconFactory.getInstance(context).fromBitmap(arrowBitmap)
-                            
-                            for (j in 1..arrowsOnThisSegment) {
-                                val progress = j.toFloat() / (arrowsOnThisSegment + 1)
-                                val lat = p1.latitude + (p2.latitude - p1.latitude) * progress
-                                val lng = p1.longitude + (p2.longitude - p1.longitude) * progress
-                                
-                                map.addMarker(MarkerOptions()
-                                    .position(LatLng(lat, lng))
-                                    .icon(arrowIcon)).apply {
-                                    setTopOffsetPixels(((HistoryMapConfig.ARROW_SIZE_DP * density) / 2).toInt())
-                                }
-                            }
-                            
-                            cumulativeDistance += segmentDistance
-                        }
-                        
-                        // 2. Add Start and End markers LAST (Ensures Z-Index top)
-                        val startIcon = IconFactory.getInstance(context).fromBitmap(
-                            createModernMarker(context, true, 0xFF4CAF50.toInt()).bitmap
+                        val endIcon = IconFactory.getInstance(context).fromBitmap(
+                            createModernMarker(context, false, 0xFFF44336.toInt()).bitmap
                         )
                         map.addMarker(MarkerOptions()
-                            .position(latLngs.first())
-                            .title("START")
-                            .icon(startIcon))
-                        
-                        if (latLngs.size >= 2) {
-                            val endIcon = IconFactory.getInstance(context).fromBitmap(
-                                createModernMarker(context, false, 0xFFF44336.toInt()).bitmap
-                            )
-                            map.addMarker(MarkerOptions()
-                                .position(latLngs.last())
-                                .title("END")
-                                .icon(endIcon))
-                        }
+                            .position(latLngs.last())
+                            .title("END")
+                            .icon(endIcon))
                     }
-                    
-                    // 3. Initial Perfect Zoom
-                    if (latLngs.size > 2 && session.totalDistanceKm > 0.005) {
-                        val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
-                        latLngs.forEach { boundsBuilder.include(it) }
-                        map.moveCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 100))
-                    } else {
-                        map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLngs.first(), 17.0))
-                    }
-                    initialFocusDone = true
                 }
+            }
+        }
+    }
+
+    // Initial Auto-Focus logic (Runs only once or when triggered)
+    var initialFocusDone by remember { mutableStateOf(false) }
+    LaunchedEffect(mapLibreMap, isStyleReady, initialFocusDone) {
+        val map = mapLibreMap ?: return@LaunchedEffect
+        if (isStyleReady && !initialFocusDone) {
+            val points = session.points
+            if (points.isNotEmpty()) {
+                val latLngs = points.map { LatLng(it.latitude, it.longitude) }
+                if (latLngs.size > 2 && session.totalDistanceKm > 0.005) {
+                    val boundsBuilder = org.maplibre.android.geometry.LatLngBounds.Builder()
+                    latLngs.forEach { boundsBuilder.include(it) }
+                    map.moveCamera(CameraUpdateFactory.newLatLngBounds(boundsBuilder.build(), 100))
+                } else {
+                    map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLngs.first(), 17.0))
+                }
+                initialFocusDone = true
             }
         }
     }

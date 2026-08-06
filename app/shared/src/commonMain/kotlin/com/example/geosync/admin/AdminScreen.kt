@@ -1,12 +1,7 @@
 package com.example.geosync.admin
 
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -26,13 +21,17 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.datetime.Instant as KInstant
 import kotlinx.datetime.Clock as KClock
+import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.TimeZone
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -64,6 +63,9 @@ fun AdminScreen(
     val historyState by viewModel.historyState.collectAsState()
     val isHistoryLoading by viewModel.isHistoryLoading.collectAsState()
     val reviewSession by viewModel.reviewSession.collectAsState()
+    val reviewRange by viewModel.reviewRange.collectAsState()
+    val isTimelineMinimized by viewModel.isTimelineMinimized.collectAsState()
+    val isTimelinePinned by viewModel.isTimelinePinned.collectAsState()
 
     // Sync Bottom Bar visibility with Map Expansion state
     LaunchedEffect(isMapExpanded) {
@@ -113,6 +115,13 @@ fun AdminScreen(
             onLoadHistory = { viewModel.loadHistory(it) },
             reviewSession = reviewSession,
             reviewCameraState = reviewCameraState,
+            reviewRange = reviewRange,
+            isTimelineMinimized = isTimelineMinimized,
+            isTimelinePinned = isTimelinePinned,
+            onReviewRangeChange = { viewModel.updateReviewRange(it) },
+            onTimelineMinimizedChange = { viewModel.setTimelineMinimized(it) },
+            onTimelinePinnedChange = { viewModel.setTimelinePinned(it) },
+            onMapInteraction = { viewModel.handleMapInteraction() },
             onReviewCameraChanged = { viewModel.updateReviewCameraState(it) },
             onEnterReview = { viewModel.enterReviewMode(it) },
             onExitReview = { viewModel.exitReviewMode() }
@@ -145,6 +154,13 @@ fun AdminContent(
     onLoadHistory: (String) -> Unit = {},
     reviewSession: TrackingSessionHistory? = null,
     reviewCameraState: MapCameraState = MapCameraState(35.6994, 51.3377, 11.0),
+    reviewRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    isTimelineMinimized: Boolean = false,
+    isTimelinePinned: Boolean = false,
+    onReviewRangeChange: (ClosedFloatingPointRange<Float>) -> Unit = {},
+    onTimelineMinimizedChange: (Boolean) -> Unit = {},
+    onTimelinePinnedChange: (Boolean) -> Unit = {},
+    onMapInteraction: () -> Unit = {},
     onReviewCameraChanged: (MapCameraState) -> Unit = {},
     onEnterReview: (TrackingSessionHistory) -> Unit = {},
     onExitReview: () -> Unit = {}
@@ -467,12 +483,26 @@ fun AdminContent(
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.surface)
             ) {
-                HistoryReviewMapView(
-                    modifier = Modifier.fillMaxSize(),
-                    session = reviewSession,
-                    cameraState = reviewCameraState,
-                    onCameraChanged = onReviewCameraChanged
-                )
+                val filteredSession = remember(reviewSession, reviewRange) {
+                    val totalPoints = reviewSession.points.size
+                    if (totalPoints <= 1) reviewSession
+                    else {
+                        val startIndex = (reviewRange.start * (totalPoints - 1)).toInt().coerceIn(0, totalPoints - 1)
+                        val endIndex = (reviewRange.endInclusive * (totalPoints - 1)).toInt().coerceIn(startIndex, totalPoints - 1)
+                        reviewSession.copy(points = reviewSession.points.subList(startIndex, endIndex + 1))
+                    }
+                }
+
+                // Dedicated Full-Screen History Map (Isolated high-performance instance)
+                filteredSession.let { session ->
+                    HistoryReviewMapView(
+                        modifier = Modifier.fillMaxSize(),
+                        session = session,
+                        cameraState = reviewCameraState,
+                        onCameraChanged = onReviewCameraChanged,
+                        onMapInteraction = onMapInteraction
+                    )
+                }
 
                 // Overlay Controls
                 Box(
@@ -486,54 +516,263 @@ fun AdminContent(
                         modifier = Modifier.align(Alignment.TopEnd),
                         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                         shape = CircleShape,
-                        shadowElevation = 6.dp
+                        shadowElevation = 0.dp
                     ) {
                         IconButton(
-                            onClick = { onExitReview() },
+                            onClick = { 
+                                if (reviewSession != null) {
+                                    onExitReview()
+                                } else {
+                                    onMapExpandedChange(false)
+                                    onMapToggle(false)
+                                }
+                            },
                             modifier = Modifier.size(48.dp)
                         ) {
                             Icon(Icons.Default.Close, strings.close, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
 
-                    // Review Info Banner
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
-                        shape = RoundedCornerShape(16.dp),
-                        shadowElevation = 4.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.History, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            val distanceText = if (reviewSession.totalDistanceKm < 1.0) {
-                                "${(reviewSession.totalDistanceKm * 1000).toInt()} m"
-                            } else {
-                                "${reviewSession.totalDistanceKm.toString().take(4)} km"
-                            }
-                            
-                            val durationText = try {
-                                val start = KInstant.parse(reviewSession.startTime ?: "")
-                                val end = if (reviewSession.endTime != null) KInstant.parse(reviewSession.endTime) else start
-                                val diff = end - start
-                                val totalSecs = diff.inWholeSeconds
-                                if (totalSecs >= 3600) "${totalSecs/3600}h ${(totalSecs%3600)/60}m" 
-                                else if (totalSecs >= 60) "${totalSecs/60} min" 
-                                else "${totalSecs}s"
-                            } catch(_: Exception) { "---" }
-                            
-                            val fullDurationText = if (reviewSession.endTime == null) "$durationText (Live)" else durationText
+                    // Timeline Slider (Modernized Shared-Element Style Morph)
+                    reviewSession.let { session ->
+                        if (session.points.size > 1) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(bottom = 24.dp)
+                            ) {
+                                AnimatedContent(
+                                    targetState = isTimelineMinimized,
+                                    modifier = Modifier.align(Alignment.BottomStart),
+                                    transitionSpec = {
+                                        if (targetState) { // MINIMIZING (Card -> Bubble)
+                                            (fadeIn(animationSpec = tween(300)) + scaleIn(initialScale = 0.8f, transformOrigin = TransformOrigin(0f, 1f)))
+                                                .togetherWith(slideOutVertically { it } + fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.5f, transformOrigin = TransformOrigin(0f, 1f)))
+                                        } else { // EXPANDING (Bubble -> Card)
+                                            (slideInVertically { it } + fadeIn(animationSpec = tween(400)) + scaleIn(initialScale = 0.5f, transformOrigin = TransformOrigin(0f, 1f)))
+                                                .togetherWith(fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.8f, transformOrigin = TransformOrigin(0f, 1f)))
+                                        }.using(SizeTransform(clip = false))
+                                    },
+                                    label = "TimelineTransition"
+                                ) { minimized ->
+                                    if (minimized) {
+                                        // Minimized Bubble - Truly Bottom Left
+                                        Surface(
+                                            onClick = { onTimelineMinimizedChange(false) },
+                                            color = MaterialTheme.colorScheme.primary,
+                                            shape = RoundedCornerShape(20.dp),
+                                            shadowElevation = 0.dp,
+                                            modifier = Modifier.size(56.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.History, null, tint = Color.White)
+                                            }
+                                        }
+                                    } else {
+                                        // Expanded Slider Card - Grows from the same Bottom Left origin
+                                        Surface(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp)
+                                                .widthIn(max = 600.dp),
+                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                                            shape = RoundedCornerShape(28.dp),
+                                            shadowElevation = 0.dp,
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                                        ) {
+                                            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Surface(
+                                                            onClick = { onTimelineMinimizedChange(true) },
+                                                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
+                                                            shape = CircleShape,
+                                                            modifier = Modifier.size(32.dp)
+                                                        ) {
+                                                            Box(contentAlignment = Alignment.Center) {
+                                                                Icon(Icons.Default.ExpandMore, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
+                                                            }
+                                                        }
+                                                        Spacer(Modifier.width(12.dp))
+                                                        Text(
+                                                            text = strings.trackingHistory,
+                                                            style = MaterialTheme.typography.labelLarge,
+                                                            fontWeight = FontWeight.Black,
+                                                            color = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    }
 
-                            Text(
-                                text = "$distanceText • $fullDurationText",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Black
-                            )
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Surface(
+                                                            onClick = { onTimelinePinnedChange(!isTimelinePinned) },
+                                                            color = if (isTimelinePinned) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                            shape = CircleShape,
+                                                            modifier = Modifier.size(32.dp),
+                                                            border = if (!isTimelinePinned) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null
+                                                        ) {
+                                                            Box(contentAlignment = Alignment.Center) {
+                                                                Icon(
+                                                                    imageVector = if (isTimelinePinned) Icons.Default.PushPin else Icons.Default.PushPin,
+                                                                    contentDescription = null,
+                                                                    tint = if (isTimelinePinned) Color.White else MaterialTheme.colorScheme.outline,
+                                                                    modifier = Modifier.size(16.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                Spacer(Modifier.height(12.dp))
+                                                
+                                                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                                                    Column {
+                                                        RangeSlider(
+                                                            value = reviewRange,
+                                                            onValueChange = onReviewRangeChange,
+                                                            modifier = Modifier.fillMaxWidth().height(32.dp),
+                                                            startThumb = {
+                                                                // Pure Green Bar Marker - No Background, No Popup
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(width = 6.dp, height = 28.dp)
+                                                                        .background(Color(0xFF4CAF50), RoundedCornerShape(3.dp))
+                                                                )
+                                                            },
+                                                            endThumb = {
+                                                                // Pure Red Bar Marker - No Background, No Popup
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(width = 6.dp, height = 28.dp)
+                                                                        .background(Color(0xFFF44336), RoundedCornerShape(3.dp))
+                                                                )
+                                                            },
+                                                            track = { rangeSliderState ->
+                                                                SliderDefaults.Track(
+                                                                    rangeSliderState = rangeSliderState,
+                                                                    modifier = Modifier.height(6.dp),
+                                                                    colors = SliderDefaults.colors(
+                                                                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                                                                        inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                                    )
+                                                                )
+                                                            }
+                                                        )
+                                                        
+                                                        // Static Session Time Labels Row
+                                                        Box(modifier = Modifier.fillMaxWidth().height(20.dp).padding(horizontal = 2.dp)) {
+                                                            val sessionStartTime = remember(session) {
+                                                                try {
+                                                                    val ts = (session.points.firstOrNull()?.timestamp ?: session.startTime ?: "").replace(" ", "T")
+                                                                    val inst = KInstant.parse(ts)
+                                                                    val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                    "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                                } catch(_: Exception) { "--:--" }
+                                                            }
+                                                            val sessionEndTime = remember(session) {
+                                                                try {
+                                                                    val ts = (session.points.lastOrNull()?.timestamp ?: session.endTime ?: "").replace(" ", "T")
+                                                                    val inst = KInstant.parse(ts)
+                                                                    val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
+                                                                    "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+                                                                } catch(_: Exception) { "--:--" }
+                                                            }
+
+                                                            Text(
+                                                                text = sessionStartTime,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                                                                modifier = Modifier.align(Alignment.CenterStart)
+                                                            )
+
+                                                            Text(
+                                                                text = sessionEndTime,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                                                                modifier = Modifier.align(Alignment.CenterEnd)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Review Info Banner (Redesigned Floating Style - Ultra Modern)
+                    reviewSession.let { session ->
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .windowInsetsPadding(WindowInsets.statusBars)
+                                .padding(top = 8.dp), // Moved up slightly
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f),
+                            shape = RoundedCornerShape(32.dp),
+                            shadowElevation = 0.dp,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = CircleShape,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Route, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                    }
+                                }
+                                
+                                Spacer(Modifier.width(12.dp))
+                                
+                                val distanceText = if (session.totalDistanceKm < 1.0) {
+                                    "${(session.totalDistanceKm * 1000).toInt()} m"
+                                } else {
+                                    "${session.totalDistanceKm.toString().take(4)} km"
+                                }
+                                
+                                val durationText = try {
+                                    val sStr = (session.startTime ?: "").replace(" ", "T")
+                                    val eStr = (session.endTime ?: session.points.lastOrNull()?.timestamp ?: "").replace(" ", "T")
+                                    if (sStr.isEmpty() || eStr.isEmpty()) "---"
+                                    else {
+                                        val start = KInstant.parse(sStr)
+                                        val end = KInstant.parse(eStr)
+                                        val diff = end - start
+                                        val totalSecs = diff.inWholeSeconds
+                                        if (totalSecs >= 3600) "${totalSecs / 3600}h ${(totalSecs % 3600) / 60}m"
+                                        else if (totalSecs >= 60) "${totalSecs / 60} min"
+                                        else "${totalSecs}s"
+                                    }
+                                } catch(_: Exception) { "---" }
+                                
+                                val fullDurationText = if (session.endTime == null) "$durationText (Live)" else durationText
+
+                                Column {
+                                    Text(
+                                        text = "$distanceText Total Path",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                    )
+                                    Text(
+                                        text = fullDurationText,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Black,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -552,7 +791,7 @@ fun AdminContent(
                     modifier = Modifier.align(Alignment.TopEnd),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                     shape = CircleShape,
-                    shadowElevation = 6.dp
+                    shadowElevation = 0.dp
                 ) {
                     IconButton(
                         onClick = { 

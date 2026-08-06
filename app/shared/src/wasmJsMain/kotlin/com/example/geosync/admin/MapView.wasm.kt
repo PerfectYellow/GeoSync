@@ -41,7 +41,8 @@ actual fun HistoryReviewMapView(
     modifier: Modifier,
     session: com.example.geosync.network.TrackingSessionHistory,
     cameraState: MapCameraState,
-    onCameraChanged: (MapCameraState) -> Unit
+    onCameraChanged: (MapCameraState) -> Unit,
+    onMapInteraction: () -> Unit
 ) {
     Box(modifier = modifier.background(Color.DarkGray))
 }

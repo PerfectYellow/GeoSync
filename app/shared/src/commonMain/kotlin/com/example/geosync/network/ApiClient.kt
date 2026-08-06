@@ -19,7 +19,7 @@ object ApiConfig {
     /**
      * Switch this to [Environment.DEVELOPMENT] for local testing.
      */
-    private val currentEnvironment = Environment.PRODUCTION
+    private val currentEnvironment = Environment.DEVELOPMENT
 
     val HOST: String = when (currentEnvironment) {
         Environment.PRODUCTION -> "geosync.invisiblesociety.space"
@@ -56,7 +56,8 @@ val geoHttpClient = HttpClient {
 suspend fun HttpClient.fetchClientHistory(clientId: String): List<TrackingSessionHistory> {
     val scheme = if (ApiConfig.isSecure) "https" else "http"
     val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}${ApiConfig.HISTORY_PATH}/$clientId"
-    return get(url).body()
+    val response: HistoryPage = get(url).body()
+    return response.sessions
 }
 
 /**
