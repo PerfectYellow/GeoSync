@@ -53,11 +53,23 @@ val geoHttpClient = HttpClient {
 /**
  * Helper to fetch client history from the GeoSync server.
  */
-suspend fun HttpClient.fetchClientHistory(clientId: String): List<TrackingSessionHistory> {
+suspend fun HttpClient.fetchClientHistory(clientId: String, from: String? = null, to: String? = null): List<TrackingSessionHistory> {
     val scheme = if (ApiConfig.isSecure) "https" else "http"
     val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}${ApiConfig.HISTORY_PATH}/$clientId"
-    val response: HistoryPage = get(url).body()
+    val response: HistoryPage = get(url) {
+        if (from != null) parameter("from", from)
+        if (to != null) parameter("to", to)
+    }.body()
     return response.sessions
+}
+
+/**
+ * Helper to fetch available history dates for a client.
+ */
+suspend fun HttpClient.fetchAvailableHistoryDates(clientId: String): List<String> {
+    val scheme = if (ApiConfig.isSecure) "https" else "http"
+    val url = "$scheme://${ApiConfig.HOST}:${ApiConfig.PORT}${ApiConfig.HISTORY_PATH}/$clientId/dates"
+    return get(url).body()
 }
 
 /**

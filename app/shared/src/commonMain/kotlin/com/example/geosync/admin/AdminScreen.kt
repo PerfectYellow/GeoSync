@@ -33,11 +33,17 @@ import kotlinx.datetime.Instant as KInstant
 import kotlinx.datetime.Clock as KClock
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.DayOfWeek
+import kotlinx.datetime.Month
+import kotlinx.datetime.number
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.launch
@@ -74,6 +80,10 @@ fun AdminScreen(
     val isTimeFilterVisible by viewModel.isTimeFilterVisible.collectAsState()
     val startTimeFilterInput by viewModel.startTimeFilterInput.collectAsState()
     val endTimeFilterInput by viewModel.endTimeFilterInput.collectAsState()
+
+    val historyDates by viewModel.historyDates.collectAsState()
+    val selectedHistoryDates by viewModel.selectedHistoryDates.collectAsState()
+    val isHistoryCalendarExpanded by viewModel.isHistoryCalendarExpanded.collectAsState()
 
     // Sync Bottom Bar visibility with Map Expansion state
     LaunchedEffect(isMapExpanded) {
@@ -141,7 +151,14 @@ fun AdminScreen(
             onMapInteraction = { viewModel.handleMapInteraction() },
             onReviewCameraChanged = { viewModel.updateReviewCameraState(it) },
             onEnterReview = { viewModel.enterReviewMode(it) },
-            onExitReview = { viewModel.exitReviewMode() }
+            onExitReview = { viewModel.exitReviewMode() },
+            historyDates = historyDates,
+            selectedHistoryDates = selectedHistoryDates,
+            isHistoryCalendarExpanded = isHistoryCalendarExpanded,
+            onLoadAvailableDates = { viewModel.loadAvailableDates(it) },
+            onToggleHistoryDate = { cid, date -> viewModel.toggleHistoryDate(cid, date) },
+            onClearHistoryDates = { viewModel.clearHistoryDates(it) },
+            onHistoryCalendarExpandedChange = { viewModel.setHistoryCalendarExpanded(it) }
         )
     }
 }
@@ -189,7 +206,14 @@ fun AdminContent(
     onMapInteraction: () -> Unit = {},
     onReviewCameraChanged: (MapCameraState) -> Unit = {},
     onEnterReview: (TrackingSessionHistory) -> Unit = {},
-    onExitReview: () -> Unit = {}
+    onExitReview: () -> Unit = {},
+    historyDates: Map<String, Set<String>> = emptyMap(),
+    selectedHistoryDates: Set<String> = emptySet(),
+    isHistoryCalendarExpanded: Boolean = false,
+    onLoadAvailableDates: (String) -> Unit = {},
+    onToggleHistoryDate: (String, String) -> Unit = { _, _ -> },
+    onClearHistoryDates: (String) -> Unit = {},
+    onHistoryCalendarExpandedChange: (Boolean) -> Unit = {}
 ) {
     var selectedClientId by remember { mutableStateOf<String?>(null) }
     var clientToRemove by remember { mutableStateOf<String?>(null) }
@@ -247,6 +271,13 @@ fun AdminContent(
             history = historyState[id] ?: emptyList(),
             isLoading = isHistoryLoading,
             isClientOnline = locations[id]?.isOnline == true,
+            availableDates = historyDates[id] ?: emptySet(),
+            selectedDates = selectedHistoryDates,
+            isCalendarExpanded = isHistoryCalendarExpanded,
+            onDateToggled = { onToggleHistoryDate(id, it) },
+            onClearDates = { onClearHistoryDates(id) },
+            onCalendarToggle = { onHistoryCalendarExpandedChange(it) },
+            onLoadDates = { onLoadAvailableDates(id) },
             onDismiss = { clientForHistory = null },
             onSessionClick = { session ->
                 onEnterReview(session)
@@ -487,6 +518,7 @@ fun AdminContent(
                                         onHistory = {
                                             clientForHistory = id
                                             onLoadHistory(id)
+                                            onLoadAvailableDates(id)
                                         },
                                         onClick = { 
                                             selectedClientId = id
@@ -1326,6 +1358,13 @@ fun HistoryBottomSheet(
     history: List<TrackingSessionHistory>,
     isLoading: Boolean,
     isClientOnline: Boolean,
+    availableDates: Set<String>,
+    selectedDates: Set<String>,
+    isCalendarExpanded: Boolean,
+    onDateToggled: (String) -> Unit,
+    onClearDates: () -> Unit,
+    onCalendarToggle: (Boolean) -> Unit,
+    onLoadDates: () -> Unit,
     onDismiss: () -> Unit,
     onSessionClick: (TrackingSessionHistory) -> Unit
 ) {
@@ -1368,19 +1407,76 @@ fun HistoryBottomSheet(
                     Spacer(Modifier.height(3.dp))
                 }
 
-                Text(
-                    text = if (history.isNotEmpty()) "${strings.trackingHistory} (${history.size})" else strings.trackingHistory,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (history.isNotEmpty()) "${strings.trackingHistory} (${history.size})" else strings.trackingHistory,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
 
-                Text(
-                    text = clientId,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = indicatorPurple,
-                    modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 16.dp)
-                )
+                    IconButton(
+                        onClick = { onCalendarToggle(!isCalendarExpanded) }
+                    ) {
+                        Icon(
+                            imageVector = if (isCalendarExpanded) Icons.Default.Close else Icons.Default.DateRange,
+                            contentDescription = null,
+                            tint = indicatorPurple
+                        )
+                    }
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isCalendarExpanded,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    HistoryCalendar(
+                        availableDates = availableDates,
+                        selectedDates = selectedDates,
+                        onDateToggled = onDateToggled,
+                        onClearDates = onClearDates,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = clientId,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = indicatorPurple
+                    )
+                    
+                    if (!isCalendarExpanded && selectedDates.isNotEmpty()) {
+                        Surface(
+                            shape = CircleShape,
+                            color = indicatorPurple.copy(alpha = 0.1f),
+                            border = BorderStroke(0.5.dp, indicatorPurple.copy(alpha = 0.2f)),
+                            onClick = { onCalendarToggle(true) }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(Icons.Default.DateRange, null, modifier = Modifier.size(12.dp), tint = indicatorPurple)
+                                Text(
+                                    text = if (selectedDates.size == 1) selectedDates.first() else "${selectedDates.size} Days",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = indicatorPurple,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
 
                 if (isLoading && history.isEmpty()) {
                     Box(
@@ -1845,6 +1941,90 @@ fun RemoveClientDialog(
     )
 }
 
+@Composable
+fun HistoryCalendar(
+    availableDates: Set<String>,
+    selectedDates: Set<String>,
+    onDateToggled: (String) -> Unit,
+    onClearDates: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val indicatorPurple = Color(0xFF8E24AA)
+    
+    val parsedDates = remember(availableDates) {
+        availableDates.mapNotNull { 
+            try { LocalDate.parse(it) } catch (_: Exception) { null } 
+        }.sortedDescending()
+    }
+    
+    if (parsedDates.isEmpty()) {
+        Box(modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+            Text("No dates available", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+        return
+    }
+
+    Column(modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Select Days", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = indicatorPurple)
+            if (selectedDates.isNotEmpty()) {
+                TextButton(
+                    onClick = onClearDates,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text("Clear All", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(vertical = 4.dp)
+        ) {
+            items(parsedDates) { date ->
+                val dateStr = date.toString()
+                val isSelected = dateStr in selectedDates
+                
+                Surface(
+                    onClick = { onDateToggled(dateStr) },
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (isSelected) indicatorPurple else Color.Transparent,
+                    border = if (isSelected) null else BorderStroke(1.dp, indicatorPurple.copy(alpha = 0.3f)),
+                    modifier = Modifier.width(70.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = date.dayOfMonth.toString(),
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isSelected) Color.White else indicatorPurple
+                        )
+                        Text(
+                            text = date.month.name.take(3),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) Color.White.copy(alpha = 0.9f) else Color.Gray
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = date.year.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) Color.White.copy(alpha = 0.7f) else Color.Gray.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Preview
 @Composable
 fun AdminScreenPreview() {
@@ -1867,7 +2047,14 @@ fun AdminScreenPreview() {
                 isMapExpanded = false,
                 onMapExpandedChange = {},
                 cameraState = MapCameraState(35.6994, 51.3377, 14.0),
-                onCameraChanged = {}
+                onCameraChanged = {},
+                historyDates = emptyMap(),
+                selectedHistoryDates = emptySet(),
+                isHistoryCalendarExpanded = false,
+                onLoadAvailableDates = {},
+                onToggleHistoryDate = { _, _ -> },
+                onClearHistoryDates = {},
+                onHistoryCalendarExpandedChange = {}
             )
         }
     }

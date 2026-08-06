@@ -58,6 +58,15 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _historyState = MutableStateFlow<Map<String, List<TrackingSessionHistory>>>(emptyMap())
     val historyState: StateFlow<Map<String, List<TrackingSessionHistory>>> = _historyState.asStateFlow()
 
+    private val _historyDates = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+    val historyDates: StateFlow<Map<String, Set<String>>> = _historyDates.asStateFlow()
+
+    private val _selectedHistoryDates = MutableStateFlow<Set<String>>(emptySet())
+    val selectedHistoryDates: StateFlow<Set<String>> = _selectedHistoryDates.asStateFlow()
+
+    private val _isHistoryCalendarExpanded = MutableStateFlow(false)
+    val isHistoryCalendarExpanded: StateFlow<Boolean> = _isHistoryCalendarExpanded.asStateFlow()
+
     private val _isHistoryLoading = MutableStateFlow(false)
     val isHistoryLoading: StateFlow<Boolean> = _isHistoryLoading.asStateFlow()
 
@@ -294,11 +303,29 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         }
     }
 
-    fun loadHistory(clientId: String) {
+    fun loadHistory(clientId: String, dates: Set<String> = emptySet()) {
         viewModelScope.launch {
             _isHistoryLoading.value = true
             try {
-                val history = client.fetchClientHistory(clientId).map { session ->
+                var from: String? = null
+                var to: String? = null
+                
+                if (dates.isNotEmpty()) {
+                    val sorted = dates.toList().sorted()
+                    from = "${sorted.first()}T00:00:00Z"
+                    to = "${sorted.last()}T23:59:59Z"
+                }
+
+                val allHistory = client.fetchClientHistory(clientId, from, to)
+                
+                // Filter locally for disjoint days if multiple days are selected
+                val history = allHistory.filter { session ->
+                    if (dates.isEmpty()) true
+                    else {
+                        val sessionDate = session.startTime?.substringBefore("T")
+                        sessionDate in dates
+                    }
+                }.map { session ->
                     // Ensure points within each session are sorted by time for consistent slider/map logic
                     session.copy(
                         clientId = clientId,
@@ -312,6 +339,33 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                 _isHistoryLoading.value = false
             }
         }
+    }
+
+    fun loadAvailableDates(clientId: String) {
+        viewModelScope.launch {
+            try {
+                val dates = client.fetchAvailableHistoryDates(clientId).toSet()
+                _historyDates.update { it + (clientId to dates) }
+            } catch (e: Exception) {
+                println("❌ Failed to load available dates for $clientId: ${e.message}")
+            }
+        }
+    }
+
+    fun toggleHistoryDate(clientId: String, date: String) {
+        val current = _selectedHistoryDates.value
+        val next = if (date in current) current - date else current + date
+        _selectedHistoryDates.value = next
+        loadHistory(clientId, next)
+    }
+
+    fun clearHistoryDates(clientId: String) {
+        _selectedHistoryDates.value = emptySet()
+        loadHistory(clientId, emptySet())
+    }
+
+    fun setHistoryCalendarExpanded(expanded: Boolean) {
+        _isHistoryCalendarExpanded.value = expanded
     }
 
     fun enterReviewMode(session: TrackingSessionHistory) {
