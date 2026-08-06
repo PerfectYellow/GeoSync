@@ -10,6 +10,19 @@ object AdminUtils {
      */
     fun formatToLocalTime(ts: String?): String {
         if (ts == null || ts.isBlank()) return "--:--"
+        
+        // Handle Unix timestamp (number as string) if server sends it as a double
+        if (ts.all { it.isDigit() || it == '.' }) {
+            return try {
+                val seconds = ts.toDouble().toLong()
+                val instant = Instant.fromEpochSeconds(seconds)
+                val local = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+                "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
+            } catch (e: Exception) {
+                "--:--"
+            }
+        }
+
         return try {
             val normalized = ts.replace(" ", "T")
             if (normalized.contains("T")) {

@@ -315,7 +315,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     }
 
     fun enterReviewMode(session: TrackingSessionHistory) {
-        val sortedSession = session.copy(points = session.points.sortedBy { it.timestamp })
+        val sortedSession = session.copy(points = session.points.sortedBy { it.timestamp ?: it.receivedAt })
         _reviewSession.value = sortedSession
         _reviewRange.value = 0f..1f
         _isMapExpanded.value = true
@@ -324,8 +324,8 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         val firstPoint = sortedSession.points.firstOrNull()
         val lastPoint = sortedSession.points.lastOrNull()
         
-        _startTimeFilterInput.value = AdminUtils.formatToLocalTime(firstPoint?.timestamp ?: sortedSession.startTime)
-        _endTimeFilterInput.value = AdminUtils.formatToLocalTime(lastPoint?.timestamp ?: sortedSession.endTime)
+        _startTimeFilterInput.value = AdminUtils.formatToLocalTime(firstPoint?.timestamp ?: firstPoint?.receivedAt ?: sortedSession.startTime)
+        _endTimeFilterInput.value = AdminUtils.formatToLocalTime(lastPoint?.timestamp ?: lastPoint?.receivedAt ?: sortedSession.endTime)
     }
 
     fun exitReviewMode() {
@@ -348,8 +348,11 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
             val sIdx = (range.start * total).toInt().coerceIn(0, total)
             val eIdx = (range.endInclusive * total).toInt().coerceIn(0, total)
             
-            _startTimeFilterInput.value = AdminUtils.formatToLocalTime(points[sIdx].timestamp)
-            _endTimeFilterInput.value = AdminUtils.formatToLocalTime(points[eIdx].timestamp)
+            val startTs = points[sIdx].timestamp ?: points[sIdx].receivedAt
+            val endTs = points[eIdx].timestamp ?: points[eIdx].receivedAt
+            
+            _startTimeFilterInput.value = AdminUtils.formatToLocalTime(startTs)
+            _endTimeFilterInput.value = AdminUtils.formatToLocalTime(endTs)
         } catch(e: Exception) {}
     }
 

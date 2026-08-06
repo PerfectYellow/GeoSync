@@ -691,20 +691,10 @@ fun AdminContent(
                                                         modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
                                                     ) {
                                                         val initialSessionStartTime = remember(session) {
-                                                            try {
-                                                                val ts = (session.points.firstOrNull()?.timestamp ?: session.startTime ?: "").replace(" ", "T")
-                                                                val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
-                                                                val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
-                                                                "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
-                                                            } catch(_: Exception) { "00:00" }
+                                                            AdminUtils.formatToLocalTime(session.points.firstOrNull()?.timestamp ?: session.points.firstOrNull()?.receivedAt ?: session.startTime).let { if (it == "--:--") "00:00" else it }
                                                         }
                                                         val initialSessionEndTime = remember(session) {
-                                                            try {
-                                                                val ts = (session.points.lastOrNull()?.timestamp ?: session.endTime ?: "").replace(" ", "T")
-                                                                val inst = KInstant.parse(ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it })
-                                                                val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
-                                                                "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
-                                                            } catch(_: Exception) { "00:00" }
+                                                            AdminUtils.formatToLocalTime(session.points.lastOrNull()?.timestamp ?: session.points.lastOrNull()?.receivedAt ?: session.endTime).let { if (it == "--:--") "00:00" else it }
                                                         }
 
                                                         Row(
@@ -809,14 +799,10 @@ fun AdminContent(
                                                                 modifier = Modifier.fillMaxWidth().height(32.dp),
                                                                 startThumb = {
                                                                     val startText = remember(session, reviewRange.start) {
-                                                                        try {
-                                                                            val idx = (reviewRange.start * (session.points.size - 1)).toInt().coerceIn(0, session.points.size - 1)
-                                                                            val ts = (session.points[idx].timestamp ?: "").replace(" ", "T")
-                                                                            val iso = ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it }
-                                                                            val inst = KInstant.parse(iso)
-                                                                            val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
-                                                                            "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
-                                                                        } catch(_: Exception) { "" }
+                                                                        val idx = (reviewRange.start * (session.points.size - 1)).toInt().coerceIn(0, session.points.size - 1)
+                                                                        val point = session.points[idx]
+                                                                        val ts = point.timestamp ?: point.receivedAt
+                                                                        AdminUtils.formatToLocalTime(ts).let { if (it == "--:--") "" else it }
                                                                     }
 
                                                                     // FORCE TRANSPARENT CONTAINER & EXACT SIZE
@@ -848,14 +834,10 @@ fun AdminContent(
                                                                 },
                                                                 endThumb = {
                                                                     val endText = remember(session, reviewRange.endInclusive) {
-                                                                        try {
-                                                                            val idx = (reviewRange.endInclusive * (session.points.size - 1)).toInt().coerceIn(0, session.points.size - 1)
-                                                                            val ts = (session.points[idx].timestamp ?: "").replace(" ", "T")
-                                                                            val iso = ts.let { if (!it.contains("+") && !it.endsWith("Z")) "${it}Z" else it }
-                                                                            val inst = KInstant.parse(iso)
-                                                                            val local = inst.toLocalDateTime(TimeZone.currentSystemDefault())
-                                                                            "${local.hour.toString().padStart(2, '0')}:${local.minute.toString().padStart(2, '0')}"
-                                                                        } catch(_: Exception) { "" }
+                                                                        val idx = (reviewRange.endInclusive * (session.points.size - 1)).toInt().coerceIn(0, session.points.size - 1)
+                                                                        val point = session.points[idx]
+                                                                        val ts = point.timestamp ?: point.receivedAt
+                                                                        AdminUtils.formatToLocalTime(ts).let { if (it == "--:--") "" else it }
                                                                     }
 
                                                                     Box(
