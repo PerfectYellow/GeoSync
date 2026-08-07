@@ -123,7 +123,10 @@ object HistoryMapConfig {
 
     // Outline Configuration
     const val OUTLINE_COLOR = 0xFF000000    // Black Outline
-    const val OUTLINE_THICKNESS = 1f        // Additional thickness for outline (total = PATH_THICKNESS + OUTLINE_THICKNESS * 2)
+    const val OUTLINE_THICKNESS = 1f        // Additional thickness for outline
+
+    // Marker Configuration
+    val MARKER_STYLE = HistoryMarkerStyle.MODERN_PIN
 }
 
 
@@ -839,74 +842,68 @@ actual fun HistoryReviewMapView(
             if (points.isNotEmpty()) {
                 val latLngs = points.map { LatLng(it.latitude, it.longitude) }
                 
-                // 1. Path (Multi-pass drawing for perfect layering)
                 if (latLngs.size >= 2) {
                     val pathStartColor = HistoryMapConfig.PATH_START_COLOR.toInt()
                     val pathEndColor = HistoryMapConfig.PATH_END_COLOR.toInt()
-                    
                     val strokeWidth = HistoryMapConfig.PATH_THICKNESS
                     val outlineWidth = strokeWidth + (HistoryMapConfig.OUTLINE_THICKNESS * 2)
                     val outlineColor = HistoryMapConfig.OUTLINE_COLOR.toInt()
-                    
                     val density = context.resources.displayMetrics.density
 
-                    var totalPathDistance = 0f
+                    var totalDist = 0f
                     for (i in 0 until latLngs.size - 1) {
-                        totalPathDistance += calculateDistance(latLngs[i], latLngs[i+1])
+                        totalDist += calculateDistance(latLngs[i], latLngs[i+1])
                     }
 
-                    // --- PASS 1: DRAW ENTIRE OUTLINE ---
-                    // Drawing all outlines first ensures color is never obscured by next segment's outline
+                    var distAcc = 0f
                     for (i in 0 until latLngs.size - 1) {
                         val p1 = latLngs[i]
                         val p2 = latLngs[i + 1]
-
-                        // Joint Outline
-                        val jointOutlineIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, outlineColor, outlineWidth + 0.5f))
-                        map.addMarker(MarkerOptions().position(p1).icon(jointOutlineIcon)).apply {
-                            setTopOffsetPixels(((outlineWidth + 0.5f) * density / 2).toInt())
-                        }
-
-                        // Segment Outline
+                        val sDist = calculateDistance(p1, p2)
+                        
+                        val ratio = if (totalDist > 0) (distAcc / totalDist) else (i.toFloat() / (latLngs.size - 1))
+                        val sColor = interpolateColor(pathStartColor, pathEndColor, ratio)
+                        
+                        // 1. Draw segment outline
                         map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
                             .add(p1, p2)
                             .color(outlineColor)
                             .width(outlineWidth))
-                    }
 
-                    // --- PASS 2: DRAW ENTIRE COLORED GRADIENT ---
-                    var cumulativeDistance = 0f
-                    for (i in 0 until latLngs.size - 1) {
-                        val p1 = latLngs[i]
-                        val p2 = latLngs[i + 1]
-                        val segmentDistance = calculateDistance(p1, p2)
-                        
-                        val ratio = if (totalPathDistance > 0) (cumulativeDistance / totalPathDistance) else (i.toFloat() / (latLngs.size - 1))
-                        val segmentColor = interpolateColor(pathStartColor, pathEndColor, ratio)
-                        
-                        // Joint Color
-                        val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, segmentColor, strokeWidth + 0.5f))
-                        map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
-                            setTopOffsetPixels(((strokeWidth + 0.5f) * density / 2).toInt())
-                        }
-
-                        // Segment Color
+                        // 2. Draw segment color
                         map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
                             .add(p1, p2)
-                            .color(segmentColor)
+                            .color(sColor)
                             .width(strokeWidth))
+
+                        // 3. Draw joint (Color only, NO outline)
+                        // This "seals" the corner between segments. 
+                        // We make it slightly larger (+1dp) to ensure 100% gap coverage.
+                        val jointSize = strokeWidth + 1f
+                        val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, sColor, jointSize))
+                        map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
+                            setTopOffsetPixels((jointSize * density / 2).toInt())
+                        }
                         
-                        cumulativeDistance += segmentDistance
+                        distAcc += sDist
+                    }
+                    
+                    // Final joint
+                    if (latLngs.isNotEmpty()) {
+                        val pLast = latLngs.last()
+                        val jointSize = strokeWidth + 1f
+                        val lastIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, pathEndColor, jointSize))
+                        map.addMarker(MarkerOptions().position(pLast).icon(lastIcon)).apply {
+                            setTopOffsetPixels((jointSize * density / 2).toInt())
+                        }
                     }
 
-                    // --- PASS 3: DRAW ARROWS ---
+                    // --- PASS 3: ARROWS AND PINS ---
                     for (i in 0 until latLngs.size - 1) {
                         val p1 = latLngs[i]
                         val p2 = latLngs[i + 1]
                         val segmentDistance = calculateDistance(p1, p2)
-                        
                         val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
-                        
                         val bearing = calculateBearing(p1, p2)
                         val arrowBitmap = createArrowBitmap(context, HistoryMapConfig.ARROW_COLOR.toInt(), bearing)
                         val arrowIcon = IconFactory.getInstance(context).fromBitmap(arrowBitmap)
@@ -916,32 +913,21 @@ actual fun HistoryReviewMapView(
                             val lat = p1.latitude + (p2.latitude - p1.latitude) * progress
                             val lng = p1.longitude + (p2.longitude - p1.longitude) * progress
                             
-                            map.addMarker(MarkerOptions()
-                                .position(LatLng(lat, lng))
-                                .icon(arrowIcon)).apply {
+                            map.addMarker(MarkerOptions().position(LatLng(lat, lng)).icon(arrowIcon)).apply {
                                 setTopOffsetPixels(((HistoryMapConfig.ARROW_SIZE_DP * density) / 2).toInt())
                             }
                         }
                     }
-                    
-                    // 2. Add Start and End markers LAST (Ensures Z-Index top)
+
                     val startIcon = IconFactory.getInstance(context).fromBitmap(
-                        createModernMarker(context, true, 0xFF4CAF50.toInt()).bitmap
+                        HistoryMarkerFactory.createMarker(context, true, 0xFF4CAF50.toInt()).bitmap
                     )
-                    map.addMarker(MarkerOptions()
-                        .position(latLngs.first())
-                        .title("START")
-                        .icon(startIcon))
+                    map.addMarker(MarkerOptions().position(latLngs.first()).title("START").icon(startIcon))
                     
-                    if (latLngs.size >= 2) {
-                        val endIcon = IconFactory.getInstance(context).fromBitmap(
-                            createModernMarker(context, false, 0xFFF44336.toInt()).bitmap
-                        )
-                        map.addMarker(MarkerOptions()
-                            .position(latLngs.last())
-                            .title("END")
-                            .icon(endIcon))
-                    }
+                    val endIcon = IconFactory.getInstance(context).fromBitmap(
+                        HistoryMarkerFactory.createMarker(context, false, 0xFFF44336.toInt()).bitmap
+                    )
+                    map.addMarker(MarkerOptions().position(latLngs.last()).title("END").icon(endIcon))
                 }
             }
         }
@@ -1047,63 +1033,6 @@ actual fun HistoryReviewMapView(
             MapPlaceholder(Modifier.fillMaxSize())
         }
     }
-}
-
-private fun createModernMarker(
-    context: android.content.Context,
-    isStart: Boolean,
-    color: Int
-): BitmapDrawable {
-    val density = context.resources.displayMetrics.density
-    val size = (if (isStart) 14f else 22f) * density
-    val width = size.toInt().coerceAtLeast(1)
-    val height = (size * 1.2f).toInt().coerceAtLeast(1)
-    
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-    if (isStart) {
-        // Simple elegant circle for start
-        paint.color = android.graphics.Color.WHITE
-        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
-        paint.color = color
-        canvas.drawCircle(size / 2f, size / 2f, size / 2f - 3f * density, paint)
-    } else {
-        // Modern pin shape for end
-        val path = android.graphics.Path()
-        val radius = size / 2f
-        val centerX = size / 2f
-        val centerY = size / 2f
-        
-        // Pin head
-        path.addCircle(centerX, centerY, radius, android.graphics.Path.Direction.CW)
-        
-        // Pin tip
-        val tipPath = android.graphics.Path()
-        tipPath.moveTo(centerX - radius * 0.8f, centerY + radius * 0.5f)
-        tipPath.lineTo(centerX, size * 1.15f)
-        tipPath.lineTo(centerX + radius * 0.8f, centerY + radius * 0.5f)
-        tipPath.close()
-        
-        path.op(tipPath, android.graphics.Path.Op.UNION)
-        
-        // Draw shadow
-        paint.color = android.graphics.Color.BLACK
-        paint.alpha = 40
-        canvas.drawCircle(centerX, size * 1.15f, 4f * density, paint)
-        
-        // Draw pin
-        paint.color = color
-        paint.alpha = 255
-        canvas.drawPath(path, paint)
-        
-        // Inner white circle
-        paint.color = android.graphics.Color.WHITE
-        canvas.drawCircle(centerX, centerY, radius * 0.4f, paint)
-    }
-
-    return BitmapDrawable(context.resources, bitmap)
 }
 
 private fun createTextBitmap(
@@ -1231,23 +1160,20 @@ private fun createArrowBitmap(context: android.content.Context, color: Int, rota
 }
 
 /**
- * Creates a circle bitmap centered on its anchor point using transparent padding.
+ * Creates a circle bitmap centered in a square canvas.
  */
 private fun createCircleBitmap(context: android.content.Context, color: Int, diameter: Float): Bitmap {
     val density = context.resources.displayMetrics.density
-    // The diameter is passed in the same units as strokeWidth (usually interpreted as DP by MapLibre)
     val size = (diameter * density).toInt().coerceAtLeast(1)
-    val width = size
-    val height = size * 2 // Double height to allow bottom anchor to hit center
     
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
         style = Paint.Style.FILL
     }
-    // Draw circle centered at the vertical middle (y = size)
-    canvas.drawCircle(width / 2f, size.toFloat(), size / 2f, paint)
+    
+    canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
     return bitmap
 }
 
@@ -1393,7 +1319,7 @@ actual fun HistoryMapView(
                 val startMarker = Marker(mapView).apply {
                     position = geoPoints.first()
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    icon = createModernMarker(context, true, startColor)
+                    icon = HistoryMarkerFactory.createMarker(context, true, startColor)
                 }
                 mapView.overlays.add(startMarker)
 
@@ -1401,7 +1327,7 @@ actual fun HistoryMapView(
                     val endMarker = Marker(mapView).apply {
                         position = geoPoints.last()
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        icon = createModernMarker(context, false, endColor)
+                        icon = HistoryMarkerFactory.createMarker(context, false, endColor)
                     }
                     mapView.overlays.add(endMarker)
                 }
