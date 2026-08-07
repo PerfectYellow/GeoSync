@@ -133,8 +133,15 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         }
         
         _mapMode.value = mode
-        if ((mode == MapMode.OFFLINE || mode == MapMode.INTERNAL) && _trackedClientIds.value.isEmpty()) {
-            // Only force re-center to Tehran if no clients are being tracked
+        if (mode == MapMode.OFFLINE) {
+            // Apply requested 14.6 zoom for offline map
+            if (_trackedClientIds.value.isEmpty()) {
+                _cameraState.value = MapCameraState(35.6994, 51.3377, 14.6)
+            } else {
+                // If we are tracking someone, keep their position but increase zoom to 14.6
+                _cameraState.update { it.copy(zoom = 14.6) }
+            }
+        } else if (mode == MapMode.INTERNAL && _trackedClientIds.value.isEmpty()) {
             _cameraState.value = MapCameraState(35.6994, 51.3377, 14.0)
         }
         

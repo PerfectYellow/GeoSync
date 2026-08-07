@@ -60,6 +60,14 @@ import org.maplibre.android.annotations.IconFactory
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.MapLibre
 import org.maplibre.android.maps.MapLibreMapOptions
+import org.maplibre.android.style.layers.*
+import org.maplibre.android.style.sources.*
+import org.maplibre.android.style.expressions.Expression.*
+import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Point
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.android.utils.ColorUtils
 import android.view.Gravity
 import java.io.File
 import java.io.FileOutputStream
@@ -833,102 +841,156 @@ actual fun HistoryReviewMapView(
         }
     }
 
-    // Drawing Logic (Reacts to session/points updates)
+    // Drawing Logic (Native Layer Approach - Uber Style)
     LaunchedEffect(mapLibreMap, session, isStyleReady) {
         val map = mapLibreMap ?: return@LaunchedEffect
+        val style = map.style ?: return@LaunchedEffect
+        
         if (isStyleReady) {
-            map.clear()
             val points = session.points
             if (points.isNotEmpty()) {
                 val latLngs = points.map { LatLng(it.latitude, it.longitude) }
-                
-                if (latLngs.size >= 2) {
-                    val pathStartColor = HistoryMapConfig.PATH_START_COLOR.toInt()
-                    val pathEndColor = HistoryMapConfig.PATH_END_COLOR.toInt()
-                    val strokeWidth = HistoryMapConfig.PATH_THICKNESS
-                    val outlineWidth = strokeWidth + (HistoryMapConfig.OUTLINE_THICKNESS * 2)
-                    val outlineColor = HistoryMapConfig.OUTLINE_COLOR.toInt()
-                    val density = context.resources.displayMetrics.density
+                val geoPoints = points.map { Point.fromLngLat(it.longitude, it.latitude) }
+                val lineString = LineString.fromLngLats(geoPoints)
 
-                    var totalDist = 0f
-                    for (i in 0 until latLngs.size - 1) {
-                        totalDist += calculateDistance(latLngs[i], latLngs[i+1])
-                    }
-
-                    var distAcc = 0f
-                    for (i in 0 until latLngs.size - 1) {
-                        val p1 = latLngs[i]
-                        val p2 = latLngs[i + 1]
-                        val sDist = calculateDistance(p1, p2)
-                        
-                        val ratio = if (totalDist > 0) (distAcc / totalDist) else (i.toFloat() / (latLngs.size - 1))
-                        val sColor = interpolateColor(pathStartColor, pathEndColor, ratio)
-                        
-                        // 1. Draw segment outline
-                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
-                            .add(p1, p2)
-                            .color(outlineColor)
-                            .width(outlineWidth))
-
-                        // 2. Draw segment color
-                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
-                            .add(p1, p2)
-                            .color(sColor)
-                            .width(strokeWidth))
-
-                        // 3. Draw joint (Color only, NO outline)
-                        // This "seals" the corner between segments. 
-                        // We make it slightly larger (+1dp) to ensure 100% gap coverage.
-                        val jointSize = strokeWidth + 1f
-                        val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, sColor, jointSize))
-                        map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
-                            setTopOffsetPixels((jointSize * density / 2).toInt())
-                        }
-                        
-                        distAcc += sDist
-                    }
-                    
-                    // Final joint
-                    if (latLngs.isNotEmpty()) {
-                        val pLast = latLngs.last()
-                        val jointSize = strokeWidth + 1f
-                        val lastIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, pathEndColor, jointSize))
-                        map.addMarker(MarkerOptions().position(pLast).icon(lastIcon)).apply {
-                            setTopOffsetPixels((jointSize * density / 2).toInt())
-                        }
-                    }
-
-                    // --- PASS 3: ARROWS AND PINS ---
-                    for (i in 0 until latLngs.size - 1) {
-                        val p1 = latLngs[i]
-                        val p2 = latLngs[i + 1]
-                        val segmentDistance = calculateDistance(p1, p2)
-                        val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
-                        val bearing = calculateBearing(p1, p2)
-                        val arrowBitmap = createArrowBitmap(context, HistoryMapConfig.ARROW_COLOR.toInt(), bearing)
-                        val arrowIcon = IconFactory.getInstance(context).fromBitmap(arrowBitmap)
-                        
-                        for (j in 1..arrowsOnThisSegment) {
-                            val progress = j.toFloat() / (arrowsOnThisSegment + 1)
-                            val lat = p1.latitude + (p2.latitude - p1.latitude) * progress
-                            val lng = p1.longitude + (p2.longitude - p1.longitude) * progress
-                            
-                            map.addMarker(MarkerOptions().position(LatLng(lat, lng)).icon(arrowIcon)).apply {
-                                setTopOffsetPixels(((HistoryMapConfig.ARROW_SIZE_DP * density) / 2).toInt())
-                            }
-                        }
-                    }
-
-                    val startIcon = IconFactory.getInstance(context).fromBitmap(
-                        HistoryMarkerFactory.createMarker(context, true, 0xFF4CAF50.toInt()).bitmap
-                    )
-                    map.addMarker(MarkerOptions().position(latLngs.first()).title("START").icon(startIcon))
-                    
-                    val endIcon = IconFactory.getInstance(context).fromBitmap(
-                        HistoryMarkerFactory.createMarker(context, false, 0xFFF44336.toInt()).bitmap
-                    )
-                    map.addMarker(MarkerOptions().position(latLngs.last()).title("END").icon(endIcon))
+                // 1. Setup Main Path Source (With Line Metrics for Gradient)
+                val sourceId = "history-source"
+                val source = style.getSourceAs<GeoJsonSource>(sourceId)
+                if (source == null) {
+                    style.addSource(GeoJsonSource(sourceId, GeoJsonOptions().withLineMetrics(true)))
                 }
+                style.getSourceAs<GeoJsonSource>(sourceId)?.setGeoJson(Feature.fromGeometry(lineString))
+
+                // 2. Setup Arrows Source
+                val arrowSourceId = "arrows-source"
+                val arrowFeatures = mutableListOf<Feature>()
+                if (latLngs.size >= 2) {
+                    for (i in 0 until latLngs.size - 1) {
+                        val p1 = latLngs[i]
+                        val p2 = latLngs[i + 1]
+                        val dist = calculateDistance(p1, p2)
+                        val bearing = calculateBearing(p1, p2)
+                        val interval = HistoryMapConfig.ARROW_INTERVAL_METERS
+                        val arrowCount = (dist / interval).toInt().coerceAtLeast(1)
+                        
+                        for (j in 1..arrowCount) {
+                            val ratio = j.toFloat() / (arrowCount + 1)
+                            val lat = p1.latitude + (p2.latitude - p1.latitude) * ratio
+                            val lng = p1.longitude + (p2.longitude - p1.longitude) * ratio
+                            val f = Feature.fromGeometry(Point.fromLngLat(lng, lat))
+                            f.addNumberProperty("bearing", bearing)
+                            arrowFeatures.add(f)
+                        }
+                    }
+                }
+                
+                val arrowSource = style.getSourceAs<GeoJsonSource>(arrowSourceId)
+                if (arrowSource == null) {
+                    style.addSource(GeoJsonSource(arrowSourceId))
+                }
+                style.getSourceAs<GeoJsonSource>(arrowSourceId)?.setGeoJson(FeatureCollection.fromFeatures(arrowFeatures))
+
+                // 3. Register Arrow Icon in Style
+                val arrowIconId = "arrow-icon"
+                if (style.getImage(arrowIconId) == null) {
+                    val arrowBmp = createArrowBitmap(context, HistoryMapConfig.ARROW_COLOR.toInt(), 0f)
+                    style.addImage(arrowIconId, arrowBmp)
+                }
+
+                // 4. Setup Outline Layer
+                val outlineId = "history-outline"
+                if (style.getLayer(outlineId) == null) {
+                    val outlineLayer = LineLayer(outlineId, sourceId).withProperties(
+                        PropertyFactory.lineColor(ColorUtils.colorToRgbaString(HistoryMapConfig.OUTLINE_COLOR.toInt())),
+                        PropertyFactory.lineWidth(HistoryMapConfig.PATH_THICKNESS + (HistoryMapConfig.OUTLINE_THICKNESS * 2)),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND)
+                    )
+                    style.addLayer(outlineLayer)
+                }
+
+                // 5. Setup Gradient Path Layer
+                val pathId = "history-path"
+                if (style.getLayer(pathId) == null) {
+                    val pathLayer = LineLayer(pathId, sourceId).withProperties(
+                        PropertyFactory.lineWidth(HistoryMapConfig.PATH_THICKNESS),
+                        PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                        PropertyFactory.lineGradient(
+                            interpolate(
+                                linear(), lineProgress(),
+                                stop(0.0, color(HistoryMapConfig.PATH_START_COLOR.toInt())),
+                                stop(1.0, color(HistoryMapConfig.PATH_END_COLOR.toInt()))
+                            )
+                        )
+                    )
+                    style.addLayerAbove(pathLayer, outlineId)
+                }
+
+                // 6. Setup Arrows Symbol Layer
+                val arrowLayerId = "history-arrows-layer"
+                if (style.getLayer(arrowLayerId) == null) {
+                    val arrowLayer = SymbolLayer(arrowLayerId, arrowSourceId).withProperties(
+                        PropertyFactory.iconImage(arrowIconId),
+                        PropertyFactory.iconRotate(get("bearing")),
+                        PropertyFactory.iconSize(1f),
+                        PropertyFactory.iconAllowOverlap(true),
+                        PropertyFactory.iconIgnorePlacement(true),
+                        PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP)
+                    )
+                    style.addLayerAbove(arrowLayer, pathId)
+                }
+
+                // 7. Setup Start/End Pins (Native Symbol Layers for Absolute Priority)
+                val pinSourceId = "pins-source"
+                val startPoint = latLngs.first()
+                val endPoint = latLngs.last()
+                
+                val pinFeatures = listOf(
+                    Feature.fromGeometry(Point.fromLngLat(startPoint.longitude, startPoint.latitude)).apply {
+                        addStringProperty("type", "start")
+                    },
+                    Feature.fromGeometry(Point.fromLngLat(endPoint.longitude, endPoint.latitude)).apply {
+                        addStringProperty("type", "end")
+                    }
+                )
+
+                val pinSource = style.getSourceAs<GeoJsonSource>(pinSourceId)
+                if (pinSource == null) {
+                    style.addSource(GeoJsonSource(pinSourceId))
+                }
+                style.getSourceAs<GeoJsonSource>(pinSourceId)?.setGeoJson(FeatureCollection.fromFeatures(pinFeatures))
+
+                // Register Pin Bitmaps
+                val startPinId = "start-pin-icon"
+                val endPinId = "end-pin-icon"
+                if (style.getImage(startPinId) == null) {
+                    style.addImage(startPinId, HistoryMarkerFactory.createMarker(context, true, 0xFF4CAF50.toInt()).bitmap)
+                }
+                if (style.getImage(endPinId) == null) {
+                    style.addImage(endPinId, HistoryMarkerFactory.createMarker(context, false, 0xFFF44336.toInt()).bitmap)
+                }
+
+                // Add Pin Layers (At the very top of the stack)
+                val pinLayerId = "history-pins-layer"
+                if (style.getLayer(pinLayerId) == null) {
+                    val pinLayer = SymbolLayer(pinLayerId, pinSourceId).withProperties(
+                        PropertyFactory.iconImage(
+                            match(
+                                get("type"),
+                                literal(startPinId),
+                                stop("start", literal(startPinId)),
+                                stop("end", literal(endPinId))
+                            )
+                        ),
+                        PropertyFactory.iconAllowOverlap(true),
+                        PropertyFactory.iconIgnorePlacement(true),
+                        PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM) // Pins usually anchor at bottom
+                    )
+                    style.addLayerAbove(pinLayer, arrowLayerId)
+                }
+                
+                map.clear() // Clear any remaining legacy annotations
             }
         }
     }
