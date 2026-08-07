@@ -61,6 +61,7 @@ fun AdminScreen(
     val isPreview = LocalInspectionMode.current
     val viewModel: AdminViewModel = viewModel { AdminViewModel(isPreview) }
     val isConnected by viewModel.isConnected.collectAsState()
+    val isConnecting by viewModel.isConnecting.collectAsState()
     val trackedClientIds by viewModel.trackedClientIds.collectAsState()
     val locations by viewModel.locations.collectAsState()
     val mapMode by viewModel.mapMode.collectAsState()
@@ -108,6 +109,7 @@ fun AdminScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         AdminContent(
             isConnected = isConnected,
+            isConnecting = isConnecting,
             networkStatus = networkStatus,
             mapMode = mapMode,
             onMapModeChange = { viewModel.setMapMode(it, networkStatus == ConnectivityStatus.Offline) },
@@ -166,6 +168,7 @@ fun AdminScreen(
 @Composable
 fun AdminContent(
     isConnected: Boolean,
+    isConnecting: Boolean = false,
     networkStatus: ConnectivityStatus,
     mapMode: MapMode,
     onMapModeChange: (MapMode) -> Unit,
@@ -371,7 +374,7 @@ fun AdminContent(
                                     fontWeight = FontWeight.Black,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                ConnectionStatus(isConnected, networkStatus, onRetryConnection)
+                                ConnectionStatus(isConnected, isConnecting, networkStatus, onRetryConnection)
                             }
 
                             MapModeSelector(
@@ -1123,20 +1126,35 @@ fun AdminContent(
 }
 
 @Composable
-fun ConnectionStatus(isConnected: Boolean, networkStatus: ConnectivityStatus, onRetry: () -> Unit) {
+fun ConnectionStatus(isConnected: Boolean, isConnecting: Boolean, networkStatus: ConnectivityStatus, onRetry: () -> Unit) {
     val isOffline = networkStatus == ConnectivityStatus.Offline
     val strings = LocalStrings.current
     
+    val infiniteTransition = rememberInfiniteTransition(label = "ConnectingPulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "PulseAlpha"
+    )
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.clickable(enabled = !isConnected && !isOffline) { onRetry() }
+        modifier = Modifier.clickable(enabled = !isConnected && !isConnecting && !isOffline) { onRetry() }
     ) {
         Box(
             modifier = Modifier
                 .size(8.dp)
+                .graphicsLayer {
+                    alpha = if (isConnecting) pulseAlpha else 1f
+                }
                 .background(
                     color = when {
                         isConnected -> Color.Green
+                        isConnecting -> Color(0xFFFFB300) // Orange for connecting
                         isOffline -> Color.Gray
                         else -> Color.Red
                     }, 
@@ -1147,11 +1165,12 @@ fun ConnectionStatus(isConnected: Boolean, networkStatus: ConnectivityStatus, on
         Text(
             text = when {
                 isConnected -> strings.connectedToServer
+                isConnecting -> strings.connecting
                 isOffline -> strings.youAreOffline
                 else -> strings.offlineTapToRetry
             },
             style = MaterialTheme.typography.labelSmall,
-            color = if (isConnected) Color.Unspecified else MaterialTheme.colorScheme.error
+            color = if (isConnected || isConnecting) Color.Unspecified else MaterialTheme.colorScheme.error
         )
     }
 }

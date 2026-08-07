@@ -11,6 +11,7 @@ interface AppStrings {
     val startTracking: String
     val stopTracking: String
     val connectedToServer: String
+    val connecting: String
     val youAreOffline: String
     val offlineTapToRetry: String
     val clientIdToTrack: String
@@ -124,6 +125,7 @@ object EnStrings : AppStrings {
     override val startTracking = "Start Tracking"
     override val stopTracking = "Stop Tracking"
     override val connectedToServer = "Connected to Server"
+    override val connecting = "Connecting..."
     override val youAreOffline = "You are offline"
     override val offlineTapToRetry = "Offline - Tap to Retry"
     override val clientIdToTrack = "Client ID to Track"
@@ -237,6 +239,7 @@ object FaStrings : AppStrings {
     override val startTracking = "شروع ردیابی"
     override val stopTracking = "توقف ردیابی"
     override val connectedToServer = "متصل به سرور"
+    override val connecting = "در حال اتصال..."
     override val youAreOffline = "شما آفلاین هستید"
     override val offlineTapToRetry = "آفلاین - برای تلاش مجدد ضربه بزنید"
     override val clientIdToTrack = "شناسه کاربر برای ردیابی"

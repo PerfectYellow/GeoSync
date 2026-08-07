@@ -29,6 +29,9 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
+    private val _isConnecting = MutableStateFlow(false)
+    val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
+
     private val _trackedClientIds = MutableStateFlow<Set<String>>(SettingsManager.trackedClientIds)
     val trackedClientIds: StateFlow<Set<String>> = _trackedClientIds.asStateFlow()
 
@@ -178,10 +181,12 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
         connectionJob = viewModelScope.launch {
             while (isActive) {
                 try {
+                    _isConnecting.value = true
                     val strings = LocalizationManager.strings
                     client.geoLiveWebSocket {
                         session = this
                         _isConnected.value = true
+                        _isConnecting.value = false
                         errorNotified = false // Reset error notification state on success
                         NotificationManager.show(strings.connectedToServer, NotificationType.SUCCESS)
 
@@ -228,6 +233,7 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                 } catch (e: Exception) {
                     val strings = LocalizationManager.strings
                     _isConnected.value = false
+                    _isConnecting.value = false
                     // Mark all clients as offline when Admin connection is lost
                     _locations.update { current ->
                         current.mapValues { it.value.copy(isOnline = false) }

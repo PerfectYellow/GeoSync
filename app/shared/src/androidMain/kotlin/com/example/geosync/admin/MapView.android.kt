@@ -839,7 +839,7 @@ actual fun HistoryReviewMapView(
             if (points.isNotEmpty()) {
                 val latLngs = points.map { LatLng(it.latitude, it.longitude) }
                 
-                // 1. Path (Gradient + Dense Continuous Arrows)
+                // 1. Path (Multi-pass drawing for perfect layering)
                 if (latLngs.size >= 2) {
                     val pathStartColor = HistoryMapConfig.PATH_START_COLOR.toInt()
                     val pathEndColor = HistoryMapConfig.PATH_END_COLOR.toInt()
@@ -854,9 +854,28 @@ actual fun HistoryReviewMapView(
                     for (i in 0 until latLngs.size - 1) {
                         totalPathDistance += calculateDistance(latLngs[i], latLngs[i+1])
                     }
-                    
+
+                    // --- PASS 1: DRAW ENTIRE OUTLINE ---
+                    // Drawing all outlines first ensures color is never obscured by next segment's outline
+                    for (i in 0 until latLngs.size - 1) {
+                        val p1 = latLngs[i]
+                        val p2 = latLngs[i + 1]
+
+                        // Joint Outline
+                        val jointOutlineIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, outlineColor, outlineWidth + 0.5f))
+                        map.addMarker(MarkerOptions().position(p1).icon(jointOutlineIcon)).apply {
+                            setTopOffsetPixels(((outlineWidth + 0.5f) * density / 2).toInt())
+                        }
+
+                        // Segment Outline
+                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                            .add(p1, p2)
+                            .color(outlineColor)
+                            .width(outlineWidth))
+                    }
+
+                    // --- PASS 2: DRAW ENTIRE COLORED GRADIENT ---
                     var cumulativeDistance = 0f
-                    
                     for (i in 0 until latLngs.size - 1) {
                         val p1 = latLngs[i]
                         val p2 = latLngs[i + 1]
@@ -865,29 +884,26 @@ actual fun HistoryReviewMapView(
                         val ratio = if (totalPathDistance > 0) (cumulativeDistance / totalPathDistance) else (i.toFloat() / (latLngs.size - 1))
                         val segmentColor = interpolateColor(pathStartColor, pathEndColor, ratio)
                         
-                        // 1a. Joint Outline
-                        val jointOutlineIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, outlineColor, outlineWidth + 0.5f))
-                        map.addMarker(MarkerOptions().position(p1).icon(jointOutlineIcon)).apply {
-                            setTopOffsetPixels(((outlineWidth + 0.5f) * density / 2).toInt())
-                        }
-
-                        // 1b. Segment Outline
-                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
-                            .add(p1, p2)
-                            .color(outlineColor)
-                            .width(outlineWidth))
-
-                        // 1c. Joint Color
+                        // Joint Color
                         val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, segmentColor, strokeWidth + 0.5f))
                         map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
                             setTopOffsetPixels(((strokeWidth + 0.5f) * density / 2).toInt())
                         }
 
-                        // 1d. Segment Color
+                        // Segment Color
                         map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
                             .add(p1, p2)
                             .color(segmentColor)
                             .width(strokeWidth))
+                        
+                        cumulativeDistance += segmentDistance
+                    }
+
+                    // --- PASS 3: DRAW ARROWS ---
+                    for (i in 0 until latLngs.size - 1) {
+                        val p1 = latLngs[i]
+                        val p2 = latLngs[i + 1]
+                        val segmentDistance = calculateDistance(p1, p2)
                         
                         val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
                         
@@ -906,7 +922,6 @@ actual fun HistoryReviewMapView(
                                 setTopOffsetPixels(((HistoryMapConfig.ARROW_SIZE_DP * density) / 2).toInt())
                             }
                         }
-                        cumulativeDistance += segmentDistance
                     }
                     
                     // 2. Add Start and End markers LAST (Ensures Z-Index top)
