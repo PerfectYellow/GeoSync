@@ -115,6 +115,15 @@ object HistoryMapConfig {
     const val PATH_THICKNESS = 10f          // Width of the traveled line
     const val ARROW_INTERVAL_METERS = 4f   // Distance between directional arrows (smaller = more dense)
     const val ARROW_SIZE_DP = 7f           // Size of each arrow icon
+
+    // Color Configuration (ARGB Hex)
+    const val PATH_START_COLOR = 0xFF00E5FF // Vibrant Cyan
+    const val PATH_END_COLOR = 0xFF651FFF   // Deep Indigo/Purple
+    const val ARROW_COLOR = 0xFFFFFFFF      // Pure White
+
+    // Outline Configuration
+    const val OUTLINE_COLOR = 0xFF000000    // Black Outline
+    const val OUTLINE_THICKNESS = 1f        // Additional thickness for outline (total = PATH_THICKNESS + OUTLINE_THICKNESS * 2)
 }
 
 
@@ -832,10 +841,13 @@ actual fun HistoryReviewMapView(
                 
                 // 1. Path (Gradient + Dense Continuous Arrows)
                 if (latLngs.size >= 2) {
-                    val pathStartColor = 0xFF00E5FF.toInt() // Vibrant Cyan
-                    val pathEndColor = 0xFF651FFF.toInt()   // Deep Indigo/Purple
+                    val pathStartColor = HistoryMapConfig.PATH_START_COLOR.toInt()
+                    val pathEndColor = HistoryMapConfig.PATH_END_COLOR.toInt()
                     
                     val strokeWidth = HistoryMapConfig.PATH_THICKNESS
+                    val outlineWidth = strokeWidth + (HistoryMapConfig.OUTLINE_THICKNESS * 2)
+                    val outlineColor = HistoryMapConfig.OUTLINE_COLOR.toInt()
+                    
                     val density = context.resources.displayMetrics.density
 
                     var totalPathDistance = 0f
@@ -853,11 +865,25 @@ actual fun HistoryReviewMapView(
                         val ratio = if (totalPathDistance > 0) (cumulativeDistance / totalPathDistance) else (i.toFloat() / (latLngs.size - 1))
                         val segmentColor = interpolateColor(pathStartColor, pathEndColor, ratio)
                         
+                        // 1a. Joint Outline
+                        val jointOutlineIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, outlineColor, outlineWidth + 0.5f))
+                        map.addMarker(MarkerOptions().position(p1).icon(jointOutlineIcon)).apply {
+                            setTopOffsetPixels(((outlineWidth + 0.5f) * density / 2).toInt())
+                        }
+
+                        // 1b. Segment Outline
+                        map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
+                            .add(p1, p2)
+                            .color(outlineColor)
+                            .width(outlineWidth))
+
+                        // 1c. Joint Color
                         val jointIcon = IconFactory.getInstance(context).fromBitmap(createCircleBitmap(context, segmentColor, strokeWidth + 0.5f))
                         map.addMarker(MarkerOptions().position(p1).icon(jointIcon)).apply {
                             setTopOffsetPixels(((strokeWidth + 0.5f) * density / 2).toInt())
                         }
 
+                        // 1d. Segment Color
                         map.addPolyline(org.maplibre.android.annotations.PolylineOptions()
                             .add(p1, p2)
                             .color(segmentColor)
@@ -866,7 +892,7 @@ actual fun HistoryReviewMapView(
                         val arrowsOnThisSegment = (segmentDistance / HistoryMapConfig.ARROW_INTERVAL_METERS).toInt().coerceAtLeast(1)
                         
                         val bearing = calculateBearing(p1, p2)
-                        val arrowBitmap = createArrowBitmap(context, android.graphics.Color.WHITE, bearing)
+                        val arrowBitmap = createArrowBitmap(context, HistoryMapConfig.ARROW_COLOR.toInt(), bearing)
                         val arrowIcon = IconFactory.getInstance(context).fromBitmap(arrowBitmap)
                         
                         for (j in 1..arrowsOnThisSegment) {

@@ -963,20 +963,55 @@ private fun IdleView(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         
+        val buttonColor by animateColorAsState(
+            if (isLoading) MaterialTheme.colorScheme.errorContainer 
+            else MaterialTheme.colorScheme.primary,
+            label = "ButtonColor"
+        )
+        val contentColor by animateColorAsState(
+            if (isLoading) MaterialTheme.colorScheme.error 
+            else MaterialTheme.colorScheme.onPrimary,
+            label = "ContentColor"
+        )
+
         Button(
             onClick = onStart,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp)
                 .padding(horizontal = 16.dp),
-            enabled = !isLoading,
             shape = RoundedCornerShape(20.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = buttonColor,
+                contentColor = contentColor
+            ),
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
         ) {
-            if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
-            } else {
-                Text(strings.startTracking, style = MaterialTheme.typography.titleMedium)
+            AnimatedContent(
+                targetState = isLoading,
+                label = "ButtonContentTransition"
+            ) { loading ->
+                if (loading) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp), 
+                            color = contentColor,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = strings.cancel, 
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    Text(
+                        text = strings.startTracking, 
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
