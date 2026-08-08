@@ -100,6 +100,9 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _reviewFocusTrigger = MutableStateFlow(0L)
     val reviewFocusTrigger: StateFlow<Long> = _reviewFocusTrigger.asStateFlow()
 
+    private val _activeHistoryClientId = MutableStateFlow<String?>(null)
+    val activeHistoryClientId: StateFlow<String?> = _activeHistoryClientId.asStateFlow()
+
     private var lastOnlineMode = MapMode.OPEN_STREET
 
     private var connectionJob: Job? = null
@@ -123,6 +126,17 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
 
     fun retryConnection() {
         connect()
+    }
+
+    fun setActiveHistoryClientId(clientId: String?) {
+        if (_activeHistoryClientId.value != clientId) {
+            _activeHistoryClientId.value = clientId
+            // Clear history and filters for previous client when switching
+            if (clientId != null) {
+                _selectedHistoryDates.value = emptySet()
+                _historyState.update { it - it.keys.filter { key -> key != clientId }.toSet() }
+            }
+        }
     }
 
     fun setMapMode(mode: MapMode, isOffline: Boolean = false) {
@@ -218,7 +232,16 @@ class AdminViewModel(private val isPreview: Boolean = false) : ViewModel() {
                                         println("AdminViewModel: Received location update for ${loc.clientId}, online: ${loc.isOnline}")
                                         val normalizedLoc = loc.copy(clientId = loc.clientId.lowercase())
                                         if (_trackedClientIds.value.contains(normalizedLoc.clientId)) {
+                                            val oldLoc = _locations.value[normalizedLoc.clientId]
                                             _locations.update { it + (normalizedLoc.clientId to normalizedLoc) }
+
+                                            // If the client's online status changed and they are the one we're looking at, refresh history
+                                            if (normalizedLoc.clientId == _activeHistoryClientId.value) {
+                                                if (oldLoc?.isOnline != normalizedLoc.isOnline) {
+                                                    println("AdminViewModel: Refreshing history for active client ${normalizedLoc.clientId} due to online status change")
+                                                    loadHistory(normalizedLoc.clientId, _selectedHistoryDates.value)
+                                                }
+                                            }
                                         }
                                     }
                                 }

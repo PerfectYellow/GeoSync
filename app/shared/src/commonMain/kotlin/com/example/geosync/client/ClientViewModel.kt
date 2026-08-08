@@ -24,21 +24,7 @@ class ClientViewModel(private val isPreview: Boolean = false) : ViewModel() {
     private val _trackingId = MutableStateFlow(SettingsManager.customId ?: SettingsManager.deviceUuid)
     val trackingId: StateFlow<String> = _trackingId.asStateFlow()
 
-    init {
-        if (!isPreview) {
-            viewModelScope.launch {
-                connectionStatus.collect { status ->
-                    if (status == ConnectionStatus.FAILED) {
-                        // Auto-hide error after 5 seconds
-                        delay(5000)
-                        if (TrackingStatus.status.value == ConnectionStatus.FAILED) {
-                            TrackingStatus.updateStatus(ConnectionStatus.IDLE)
-                        }
-                    }
-                }
-            }
-        }
-    }
+    init { }
 
     fun toggleTracking() {
         val status = connectionStatus.value

@@ -132,7 +132,7 @@ fun AdminScreen(
             },
             historyState = historyState,
             isHistoryLoading = isHistoryLoading,
-            onLoadHistory = { viewModel.loadHistory(it) },
+            onLoadHistory = { viewModel.loadHistory(it, selectedHistoryDates) },
             reviewSession = reviewSession,
             reviewCameraState = reviewCameraState,
             reviewFocusTrigger = reviewFocusTrigger,
@@ -160,7 +160,8 @@ fun AdminScreen(
             onLoadAvailableDates = { viewModel.loadAvailableDates(it) },
             onToggleHistoryDate = { cid, date -> viewModel.toggleHistoryDate(cid, date) },
             onClearHistoryDates = { viewModel.clearHistoryDates(it) },
-            onHistoryCalendarExpandedChange = { viewModel.setHistoryCalendarExpanded(it) }
+            onHistoryCalendarExpandedChange = { viewModel.setHistoryCalendarExpanded(it) },
+            onActiveHistoryClientChange = { viewModel.setActiveHistoryClientId(it) }
         )
     }
 }
@@ -216,7 +217,8 @@ fun AdminContent(
     onLoadAvailableDates: (String) -> Unit = {},
     onToggleHistoryDate: (String, String) -> Unit = { _, _ -> },
     onClearHistoryDates: (String) -> Unit = {},
-    onHistoryCalendarExpandedChange: (Boolean) -> Unit = {}
+    onHistoryCalendarExpandedChange: (Boolean) -> Unit = {},
+    onActiveHistoryClientChange: (String?) -> Unit = {}
 ) {
     var selectedClientId by remember { mutableStateOf<String?>(null) }
     var clientToRemove by remember { mutableStateOf<String?>(null) }
@@ -281,10 +283,14 @@ fun AdminContent(
             onClearDates = { onClearHistoryDates(id) },
             onCalendarToggle = { onHistoryCalendarExpandedChange(it) },
             onLoadDates = { onLoadAvailableDates(id) },
-            onDismiss = { clientForHistory = null },
+            onDismiss = { 
+                clientForHistory = null
+                onActiveHistoryClientChange(null)
+            },
             onSessionClick = { session ->
                 onEnterReview(session)
                 clientForHistory = null
+                onActiveHistoryClientChange(null)
             }
         )
     }
@@ -520,6 +526,7 @@ fun AdminContent(
                                         onRemove = { clientToRemove = id },
                                         onHistory = {
                                             clientForHistory = id
+                                            onActiveHistoryClientChange(id)
                                             onLoadHistory(id)
                                             onLoadAvailableDates(id)
                                         },
@@ -1671,31 +1678,33 @@ fun HistorySessionItem(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    if (!isLive) {
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                    // END row
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        // Timeline part
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(top = 4.dp, end = 16.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .background(if (session.endTime != null) Color(0xFFF44336) else Color.Gray, CircleShape)
-                                    .shadow(2.dp, CircleShape)
+                        // END row
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            // Timeline part
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(top = 4.dp, end = 16.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .background(if (session.endTime != null || endPoint != null) Color(0xFFF44336) else Color.Gray, CircleShape)
+                                        .shadow(2.dp, CircleShape)
+                                )
+                            }
+
+                            // Info part
+                            HistoryTimeLocation(
+                                label = strings.sessionEnd,
+                                time = session.endTime ?: endPoint?.timestamp,
+                                lat = endPoint?.latitude,
+                                lng = endPoint?.longitude,
+                                isStart = false
                             )
                         }
-
-                        // Info part
-                        HistoryTimeLocation(
-                            label = strings.sessionEnd,
-                            time = session.endTime,
-                            lat = endPoint?.latitude,
-                            lng = endPoint?.longitude,
-                            isStart = false
-                        )
                     }
                 }
             }

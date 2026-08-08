@@ -7,7 +7,8 @@ enum class ConnectionStatus {
     IDLE,
     CONNECTING,
     CONNECTED,
-    FAILED
+    FAILED,
+    RECONNECTING
 }
 
 object TrackingStatus {

@@ -101,6 +101,8 @@ interface AppStrings {
     val close: String
     val confirmRemoval: String
     val removeClientMessage: String
+    val confirmStopTracking: String
+    val stopTrackingConfirmationMessage: String
     val viewHistory: String
     val trackingHistory: String
     val distanceTraveled: String
@@ -215,6 +217,8 @@ object EnStrings : AppStrings {
     override val close = "Close"
     override val confirmRemoval = "Confirm Removal"
     override val removeClientMessage = "Are you sure you want to stop tracking this client?"
+    override val confirmStopTracking = "Stop Tracking?"
+    override val stopTrackingConfirmationMessage = "Are you sure you want to cancel? This will end your current tracking session."
     override val viewHistory = "View History"
     override val trackingHistory = "Tracking History"
     override val distanceTraveled = "Distance Traveled"
@@ -329,6 +333,8 @@ object FaStrings : AppStrings {
     override val close = "بستن"
     override val confirmRemoval = "تأیید حذف"
     override val removeClientMessage = "آیا مطمئن هستید که می‌خواهید ردیابی این کاربر را متوقف کنید؟ تمام داده‌های زنده این نشست از پورتال پاک خواهد شد."
+    override val confirmStopTracking = "توقف ردیابی؟"
+    override val stopTrackingConfirmationMessage = "آیا مطمئن هستید که می‌خواهید لغو کنید؟ این کار باعث پایان یافتن نشست ردیابی فعلی شما می‌شود."
     override val viewHistory = "مشاهده تاریخچه"
     override val trackingHistory = "تاریخچه ردیابی"
     override val distanceTraveled = "مسافت طی شده"

@@ -88,6 +88,7 @@ fun ClientScreen(
     var showBackgroundRationale by remember { mutableStateOf(false) }
     var showDeviceDetails by remember { mutableStateOf(false) }
     var showConnectionTypePicker by remember { mutableStateOf(false) }
+    var showStopConfirmation by remember { mutableStateOf(false) }
 
     val locationPermissionState = rememberPermissionState(
         permission = PermissionNames.LOCATION,
@@ -114,6 +115,8 @@ fun ClientScreen(
             onToggleTracking = {
                 if (networkStatus == ConnectivityStatus.Offline) {
                     NotificationManager.showOffline()
+                } else if (connectionStatus == ConnectionStatus.CONNECTED || connectionStatus == ConnectionStatus.CONNECTING) {
+                    showStopConfirmation = true
                 } else if (locationPermissionState.hasPermission) {
                     viewModel.toggleTracking()
                 } else {
@@ -134,6 +137,16 @@ fun ClientScreen(
             paddingValues = paddingValues
         )
 
+        if (showStopConfirmation) {
+            StopConfirmationDialog(
+                onDismiss = { showStopConfirmation = false },
+                onConfirm = {
+                    showStopConfirmation = false
+                    viewModel.toggleTracking()
+                }
+            )
+        }
+
         if (showDeviceDetails) {
             DeviceDetailsDialog(onDismiss = { showDeviceDetails = false })
         }
@@ -144,8 +157,6 @@ fun ClientScreen(
                 onSet = { selectedType ->
                     SettingsManager.connectionType = selectedType
                     showConnectionTypePicker = false
-                    // The user said they will set functionality, 
-                    // but we still need to save the setting so the UI reflects it.
                 }
             )
         }
@@ -188,335 +199,395 @@ fun ClientScreen(
             )
         }
         
-        // Floating notification at the top
         NotificationBanner()
     }
 }
 
 @Composable
-fun PermissionDialog(
-    isPermanentlyDenied: Boolean,
-    onDismiss: () -> Unit,
-    onGrant: () -> Unit,
-    onOpenSettings: () -> Unit
+fun ClientScreenContent(
+    trackingId: String,
+    connectionStatus: ConnectionStatus,
+    connectionError: String?,
+    subscribersCount: Int = 0,
+    restProgress: Float = 0f,
+    hasBackgroundPermission: Boolean = true,
+    isBatteryOptimized: Boolean = false,
+    onToggleTracking: () -> Unit,
+    onRefreshId: () -> Unit = {},
+    onUpdateCustomId: (String) -> Unit = {},
+    onRequestBackgroundPermission: () -> Unit = {},
+    onFixBatteryOptimization: () -> Unit = {},
+    onShowDeviceDetails: () -> Unit = {},
+    onShowConnectionType: () -> Unit = {},
+    onManualUpdate: () -> Unit = {},
+    paddingValues: PaddingValues = PaddingValues(0.dp)
 ) {
+    val clipboardManager = LocalClipboardManager.current
     val strings = LocalStrings.current
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = if (isPermanentlyDenied) strings.permissionBlocked else strings.locationAccessRequired,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Text(
-                text = if (isPermanentlyDenied) {
-                    strings.locationPermissionDeniedPermanently
-                } else {
-                    strings.locationPermissionRationale
-                },
-                style = MaterialTheme.typography.bodyMedium
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = if (isPermanentlyDenied) onOpenSettings else onGrant,
-                shape = RoundedCornerShape(12.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(paddingValues)
+            .padding(top = 0.dp, bottom = 16.dp, start = 24.dp, end = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Descriptive Header
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(if (isPermanentlyDenied) strings.openSettings else strings.grantPermission)
+                Text(
+                    text = strings.clientPortal,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+
+                LanguageSelector()
+
+                var showOptionsMenu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { showOptionsMenu = true }) {
+                        Icon(Icons.Default.MoreVert, "More Options", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    DropdownMenu(
+                        expanded = showOptionsMenu,
+                        onDismissRequest = { showOptionsMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(strings.connectionType) },
+                            leadingIcon = { Icon(Icons.Default.SettingsEthernet, null) },
+                            onClick = {
+                                showOptionsMenu = false
+                                onShowConnectionType()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(strings.deviceInfo) },
+                            leadingIcon = { Icon(Icons.Default.Info, null) },
+                            onClick = {
+                                showOptionsMenu = false
+                                onShowDeviceDetails()
+                            }
+                        )
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(strings.cancel)
-            }
-        },
-        shape = RoundedCornerShape(24.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        icon = {
-            Icon(
-                imageVector = if (isPermanentlyDenied) Icons.Default.Settings else Icons.Default.LocationOn,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
+
+            Text(
+                text = strings.locationSynchronization,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            // Warnings
+            if (!hasBackgroundPermission || isBatteryOptimized) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!hasBackgroundPermission) {
+                        WarningItem(Icons.Default.Warning, strings.backgroundLocationWarning, onRequestBackgroundPermission)
+                    }
+                    if (isBatteryOptimized) {
+                        WarningItem(Icons.Default.BatteryAlert, strings.batteryOptimizationWarning, onFixBatteryOptimization)
+                    }
+                }
+            }
         }
-    )
+
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds(),
+            contentAlignment = Alignment.Center
+        ) {
+            AnimatedContent(
+                targetState = connectionStatus,
+                label = "TrackingState",
+                transitionSpec = {
+                    if (targetState == ConnectionStatus.CONNECTED || (initialState == ConnectionStatus.IDLE && (targetState == ConnectionStatus.CONNECTING || targetState == ConnectionStatus.RECONNECTING))) {
+                        (slideInVertically { height -> height / 4 } + fadeIn(animationSpec = tween(400)))
+                            .togetherWith(slideOutVertically { height -> -height / 4 } + fadeOut(animationSpec = tween(400)))
+                    } else {
+                        (slideInVertically { height -> -height / 4 } + fadeIn(animationSpec = tween(400)))
+                            .togetherWith(slideOutVertically { height -> height / 4 } + fadeOut(animationSpec = tween(400)))
+                    }.using(SizeTransform(clip = false))
+                }
+            ) { status ->
+                when (status) {
+                    ConnectionStatus.IDLE -> {
+                        IdleView(
+                            trackingId = trackingId,
+                            onStart = onToggleTracking,
+                            onRefreshId = onRefreshId,
+                            onUpdateCustomId = onUpdateCustomId,
+                            isLoading = false
+                        )
+                    }
+                    ConnectionStatus.CONNECTING, ConnectionStatus.RECONNECTING, ConnectionStatus.FAILED -> {
+                        ConnectingView(
+                            onCancel = onToggleTracking,
+                            isFailed = status == ConnectionStatus.FAILED || status == ConnectionStatus.RECONNECTING,
+                            errorMessage = connectionError
+                        )
+                    }
+                    ConnectionStatus.CONNECTED -> {
+                        TrackingView(
+                            trackingId = trackingId,
+                            connectionStatus = connectionStatus,
+                            subscribersCount = subscribersCount,
+                            restProgress = restProgress,
+                            onManualUpdate = onManualUpdate,
+                            onStop = onToggleTracking,
+                            onCopy = { clipboardManager.setText(AnnotatedString(trackingId)) }
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-fun ConnectionTypeDialog(
-    onDismiss: () -> Unit,
-    onSet: (SettingsManager.ConnectionType) -> Unit
+private fun IdleView(
+    trackingId: String,
+    onStart: () -> Unit,
+    onRefreshId: () -> Unit,
+    onUpdateCustomId: (String) -> Unit,
+    isLoading: Boolean
 ) {
     val strings = LocalStrings.current
-    var selectedType by remember { mutableStateOf(SettingsManager.connectionType) }
+    val clipboardManager = LocalClipboardManager.current
+    var isEditing by remember { mutableStateOf(false) }
+    var editValue by remember(trackingId) { 
+        mutableStateOf(if (trackingId.startsWith("@")) trackingId.removePrefix("@") else "") 
+    }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SettingsEthernet,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = strings.connectionType,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            modifier = Modifier.size(120.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.LocationOn, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
             }
-        },
-        text = {
-            Column(
-                modifier = Modifier.padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                SettingsManager.ConnectionType.entries.forEach { type ->
-                    val isSelected = type == selectedType
-                    val backgroundColor by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                        else MaterialTheme.colorScheme.surface
-                    )
-                    val borderColor by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-
-                    Surface(
-                        onClick = { selectedType = type },
-                        shape = RoundedCornerShape(16.dp),
-                        color = backgroundColor,
-                        border = BorderStroke(1.dp, borderColor),
-                        modifier = Modifier.fillMaxWidth()
+        }
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.padding(horizontal = 24.dp).fillMaxWidth().shadow(2.dp, RoundedCornerShape(20.dp)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        ) {
+            AnimatedContent(targetState = isEditing, label = "IdEdit") { editing ->
+                if (editing) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        OutlinedTextField(
+                            value = editValue,
+                            onValueChange = { if (it.length <= 20) editValue = it.filter { c -> c.isLetterOrDigit() || c == '_' } },
+                            modifier = Modifier.weight(1f),
+                            prefix = { Text("@", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
+                            placeholder = { Text(strings.usernamePlaceholder) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                        IconButton(onClick = { if (editValue.length >= 2) { onUpdateCustomId("@$editValue"); isEditing = false } }, enabled = editValue.length >= 2) {
+                            Icon(Icons.Default.Done, strings.save, tint = MaterialTheme.colorScheme.primary)
+                        }
+                        IconButton(onClick = { isEditing = false }) {
+                            Icon(Icons.Default.Close, strings.cancel, tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Row(
-                            modifier = Modifier
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp))
+                                .clickable { clipboardManager.setText(AnnotatedString(trackingId)) }
+                                .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(
-                                        if (isSelected) MaterialTheme.colorScheme.primary 
-                                        else MaterialTheme.colorScheme.surfaceVariant,
-                                        CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = if (type == SettingsManager.ConnectionType.WEBSOCKET) 
-                                        Icons.Default.SyncAlt else Icons.Default.Http,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary 
-                                           else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            Box(modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f), CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(if (trackingId.startsWith("@")) Icons.Default.Person else Icons.Default.Fingerprint, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                             }
-                            
-                            Spacer(modifier = Modifier.width(16.dp))
-                            
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = when (type) {
-                                        SettingsManager.ConnectionType.WEBSOCKET -> strings.websocket
-                                        SettingsManager.ConnectionType.REST -> strings.rest
-                                    },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary 
-                                            else MaterialTheme.colorScheme.onSurface
-                                )
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(strings.sessionUuid, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                Text(if (trackingId.startsWith("@")) trackingId else if (trackingId.length > 13) "${trackingId.take(13)}..." else trackingId,
+                                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
                             }
-                            
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(24.dp)
-                                )
+                        }
+                        Row(modifier = Modifier.padding(end = 16.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = onRefreshId, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Refresh, strings.refresh, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(onClick = { isEditing = true }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Edit, strings.edit, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.secondary)
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onSet(selectedType) },
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(48.dp).fillMaxWidth(0.45f)
-            ) {
-                Text(strings.set, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            OutlinedButton(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(48.dp).fillMaxWidth(0.45f)
-            ) {
-                Text(strings.close)
-            }
-        },
-        shape = RoundedCornerShape(28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp
-    )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(strings.readyToSync, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(strings.startBroadcastingDesc, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        
+        Button(
+            onClick = onStart,
+            modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 16.dp),
+            shape = RoundedCornerShape(20.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+        ) {
+            Text(strings.startTracking, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+    }
 }
 
 @Composable
-fun DeviceDetailsDialog(onDismiss: () -> Unit) {
+private fun ConnectingView(
+    onCancel: () -> Unit,
+    isFailed: Boolean = false,
+    errorMessage: String? = null
+) {
     val strings = LocalStrings.current
-    val clipboardManager = LocalClipboardManager.current
-    val deviceUuid = SettingsManager.deviceUuid
-    val platform = getPlatform()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = strings.deviceInfo,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Device Name (User named)
-                if (platform.deviceName.isNotBlank()) {
-                    DeviceInfoItem(
-                        label = strings.deviceName,
-                        value = platform.deviceName,
-                        icon = Icons.Default.Person
-                    )
-                }
-
-                // Manufacturer and Model
-                Row(
-                    modifier = Modifier.fillMaxWidth(), 
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    DeviceInfoItem(
-                        label = strings.manufacturer,
-                        value = platform.manufacturer,
-                        icon = Icons.Default.Business,
-                        modifier = Modifier.weight(1f)
-                    )
-                    DeviceInfoItem(
-                        label = strings.model,
-                        value = platform.model,
-                        icon = Icons.Default.PhoneAndroid,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                // Platform and App Version
-                Row(
-                    modifier = Modifier.fillMaxWidth(), 
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    DeviceInfoItem(
-                        label = strings.platform,
-                        value = platform.name,
-                        icon = Icons.Default.Settings,
-                        modifier = Modifier.weight(1f)
-                    )
-                    DeviceInfoItem(
-                        label = strings.appVersion,
-                        value = "1.0.0",
-                        icon = Icons.Default.Build,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                // System ID
-                if (platform.systemId.isNotBlank()) {
-                    DeviceInfoItem(
-                        label = strings.systemId,
-                        value = platform.systemId,
-                        icon = Icons.Default.Dns
-                    )
-                }
-
-                // UUID Card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f))
-                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-                        .clickable { clipboardManager.setText(AnnotatedString(deviceUuid)) }
-                        .padding(16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Fingerprint,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = strings.deviceUuid,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.weight(1f))
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = strings.copy,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                        )
-                    }
-                    Text(
-                        text = deviceUuid,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 8.dp),
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(strings.dismiss)
-            }
-        },
-        shape = RoundedCornerShape(28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp
+    val infiniteTransition = rememberInfiniteTransition(label = "ConnectingPulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(animation = tween(1000, easing = FastOutSlowInEasing), repeatMode = RepeatMode.Reverse),
+        label = "Scale"
     )
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+        Box(contentAlignment = Alignment.Center) {
+            Surface(modifier = Modifier.size(120.dp).graphicsLayer(scaleX = scale, scaleY = scale), shape = CircleShape, color = (if (isFailed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer).copy(alpha = 0.3f)) {}
+            CircularProgressIndicator(modifier = Modifier.size(80.dp), color = if (isFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, strokeWidth = 4.dp)
+            Icon(if (isFailed) Icons.Default.CloudOff else Icons.Default.CloudSync, null, modifier = Modifier.size(40.dp), tint = if (isFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Text(if (isFailed) strings.connecting else strings.connecting, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text(errorMessage ?: strings.waitingForConnection, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 48.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(48.dp))
+        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)) {
+            Text(strings.cancel)
+        }
+    }
+}
+
+@Composable
+private fun TrackingView(
+    trackingId: String, 
+    connectionStatus: ConnectionStatus,
+    subscribersCount: Int,
+    restProgress: Float = 0f,
+    onManualUpdate: () -> Unit,
+    onStop: () -> Unit, 
+    onCopy: () -> Unit
+) {
+    val strings = LocalStrings.current
+    var lastUpdateMark by remember { mutableStateOf(TimeSource.Monotonic.markNow()) }
+    val scale by animateFloatAsState(
+        targetValue = if (lastUpdateMark.elapsedNow() < 300.milliseconds) 1.2f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "IconScale"
+    )
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.graphicsLayer(scaleX = scale, scaleY = scale).let { mod ->
+                if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                    mod.clickable(indication = ripple(bounded = false, radius = 60.dp), interactionSource = remember { MutableInteractionSource() }) {
+                        lastUpdateMark = TimeSource.Monotonic.markNow()
+                        onManualUpdate()
+                    }
+                } else mod
+            }
+        ) {
+            val statusColor = Color(0xFF2E7D32)
+            Surface(modifier = Modifier.size(100.dp), shape = CircleShape, color = statusColor.copy(alpha = 0.1f)) {}
+            if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                CircularProgressIndicator(progress = { restProgress }, modifier = Modifier.size(100.dp), color = statusColor, strokeWidth = 4.dp, trackColor = Color.Transparent)
+            }
+            Icon(Icons.Default.LocationOn, null, modifier = Modifier.size(48.dp), tint = statusColor)
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(strings.nowTracking, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32))
+        
+        if (subscribersCount > 0) {
+            Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(top = 8.dp)) {
+                Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Visibility, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                    Spacer(Modifier.width(6.dp))
+                    Text(strings.adminSubscribed(subscribersCount), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(32.dp))
+        Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)).clickable { onCopy() }.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(strings.sessionUuid, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+            Text(trackingId, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(strings.tapToCopyId, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(48.dp))
+        OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp), shape = RoundedCornerShape(20.dp), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error), border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)) {
+            Text(strings.stopTracking)
+        }
+    }
+}
+
+@Composable
+private fun WarningItem(icon: ImageVector, message: String, onFix: () -> Unit) {
+    val strings = LocalStrings.current
+    Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.1f))) {
+        Row(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.width(12.dp))
+            Text(message, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onFix, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp), modifier = Modifier.height(32.dp), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Text(strings.fix, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun PermissionDialog(isPermanentlyDenied: Boolean, onDismiss: () -> Unit, onGrant: () -> Unit, onOpenSettings: () -> Unit) {
+    val strings = LocalStrings.current
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (isPermanentlyDenied) strings.permissionBlocked else strings.locationAccessRequired, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }, text = { Text(if (isPermanentlyDenied) strings.locationPermissionDeniedPermanently else strings.locationPermissionRationale, style = MaterialTheme.typography.bodyMedium) }, confirmButton = { Button(onClick = if (isPermanentlyDenied) onOpenSettings else onGrant, shape = RoundedCornerShape(12.dp)) { Text(if (isPermanentlyDenied) strings.openSettings else strings.grantPermission) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }, shape = RoundedCornerShape(24.dp), containerColor = MaterialTheme.colorScheme.surface, icon = { Icon(if (isPermanentlyDenied) Icons.Default.Settings else Icons.Default.LocationOn, null, tint = MaterialTheme.colorScheme.primary) })
+}
+
+@Composable
+fun ConnectionTypeDialog(onDismiss: () -> Unit, onSet: (SettingsManager.ConnectionType) -> Unit) {
+    val strings = LocalStrings.current
+    var selectedType by remember { mutableStateOf(SettingsManager.connectionType) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.SettingsEthernet, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp)); Spacer(modifier = Modifier.width(12.dp)); Text(strings.connectionType, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) } }, text = { Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { SettingsManager.ConnectionType.entries.forEach { type -> val isSelected = type == selectedType; val backgroundColor by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surface); val borderColor by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)); Surface(onClick = { selectedType = type }, shape = RoundedCornerShape(16.dp), color = backgroundColor, border = BorderStroke(1.dp, borderColor), modifier = Modifier.fillMaxWidth()) { Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { Box(modifier = Modifier.size(40.dp).background(if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) { Icon(if (type == SettingsManager.ConnectionType.WEBSOCKET) Icons.Default.SyncAlt else Icons.Default.Http, null, modifier = Modifier.size(20.dp), tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant) }; Spacer(modifier = Modifier.width(16.dp)); Column(modifier = Modifier.weight(1f)) { Text(when (type) { SettingsManager.ConnectionType.WEBSOCKET -> strings.websocket; SettingsManager.ConnectionType.REST -> strings.rest }, style = MaterialTheme.typography.titleMedium, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) }; if (isSelected) { Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp)) } } } } } }, confirmButton = { Button(onClick = { onSet(selectedType) }, shape = RoundedCornerShape(12.dp), modifier = Modifier.height(48.dp).fillMaxWidth(0.45f)) { Text(strings.set, fontWeight = FontWeight.Bold) } }, dismissButton = { OutlinedButton(onClick = onDismiss, shape = RoundedCornerShape(12.dp), modifier = Modifier.height(48.dp).fillMaxWidth(0.45f)) { Text(strings.close) } }, shape = RoundedCornerShape(28.dp), containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp)
 }
 
 @Composable
@@ -558,704 +629,28 @@ private fun DeviceInfoItem(
 }
 
 @Composable
-fun ClientScreenContent(
-    trackingId: String,
-    connectionStatus: ConnectionStatus,
-    connectionError: String?,
-    subscribersCount: Int = 0,
-    restProgress: Float = 0f,
-    hasBackgroundPermission: Boolean = true,
-    isBatteryOptimized: Boolean = false,
-    onToggleTracking: () -> Unit,
-    onRefreshId: () -> Unit = {},
-    onUpdateCustomId: (String) -> Unit = {},
-    onRequestBackgroundPermission: () -> Unit = {},
-    onFixBatteryOptimization: () -> Unit = {},
-    onShowDeviceDetails: () -> Unit = {},
-    onShowConnectionType: () -> Unit = {},
-    onManualUpdate: () -> Unit = {},
-    paddingValues: PaddingValues = PaddingValues(0.dp)
-) {
-    val clipboardManager = LocalClipboardManager.current
-    val isConnected = connectionStatus == ConnectionStatus.CONNECTED
-    val strings = LocalStrings.current
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(paddingValues)
-            .padding(
-                top = 0.dp, bottom = 16.dp, start = 24.dp, end = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Descriptive Header
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = strings.clientPortal,
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
-                )
-
-                LanguageSelector()
-
-                var showOptionsMenu by remember { mutableStateOf(false) }
-                Box {
-                    IconButton(onClick = { showOptionsMenu = true }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "More Options",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showOptionsMenu,
-                        onDismissRequest = { showOptionsMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(strings.connectionType) },
-                            leadingIcon = { Icon(Icons.Default.SettingsEthernet, contentDescription = null) },
-                            onClick = {
-                                showOptionsMenu = false
-                                onShowConnectionType()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(strings.deviceInfo) },
-                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-                            onClick = {
-                                showOptionsMenu = false
-                                onShowDeviceDetails()
-                            }
-                        )
-                    }
-                }
-            }
-
-            Text(
-                text = strings.locationSynchronization,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Warnings for background tracking
-            if (!hasBackgroundPermission || isBatteryOptimized) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (!hasBackgroundPermission) {
-                        WarningItem(
-                            icon = Icons.Default.Warning,
-                            message = strings.backgroundLocationWarning,
-                            onFix = onRequestBackgroundPermission
-                        )
-                    }
-                    if (isBatteryOptimized) {
-                        WarningItem(
-                            icon = Icons.Default.BatteryAlert,
-                            message = strings.batteryOptimizationWarning,
-                            onFix = onFixBatteryOptimization
-                        )
-                    }
-                }
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clipToBounds(),
-            contentAlignment = Alignment.Center
-        ) {
-            AnimatedContent(
-                targetState = isConnected,
-                label = "TrackingState",
-                transitionSpec = {
-                    if (targetState) {
-                        (slideInVertically { height -> height / 4 } + fadeIn(animationSpec = tween(400)))
-                            .togetherWith(slideOutVertically { height -> -height / 4 } + fadeOut(animationSpec = tween(400)))
-                    } else {
-                        (slideInVertically { height -> -height / 4 } + fadeIn(animationSpec = tween(400)))
-                            .togetherWith(slideOutVertically { height -> height / 4 } + fadeOut(animationSpec = tween(400)))
-                    }.using(
-                        SizeTransform(clip = false)
-                    )
-                }
-            ) { connected ->
-                if (!connected) {
-                    IdleView(
-                        trackingId = trackingId,
-                        onStart = onToggleTracking,
-                        onRefreshId = onRefreshId,
-                        onUpdateCustomId = onUpdateCustomId,
-                        isLoading = connectionStatus == ConnectionStatus.CONNECTING
-                    )
-                } else {
-                    TrackingView(
-                        trackingId = trackingId,
-                        connectionStatus = connectionStatus,
-                        subscribersCount = subscribersCount,
-                        restProgress = restProgress,
-                        onManualUpdate = onManualUpdate,
-                        onStop = onToggleTracking,
-                        onCopy = {
-                            clipboardManager.setText(AnnotatedString(trackingId))
-                        }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WarningItem(
-    icon: ImageVector,
-    message: String,
-    onFix: () -> Unit
-) {
-    val strings = LocalStrings.current
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.1f))
-    ) {
-        Row(
-            modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.error
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = message,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(Modifier.width(8.dp))
-            TextButton(
-                onClick = onFix,
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                modifier = Modifier.height(32.dp),
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-            ) {
-                Text(
-                    text = strings.fix,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun IdleView(
-    trackingId: String,
-    onStart: () -> Unit,
-    onRefreshId: () -> Unit,
-    onUpdateCustomId: (String) -> Unit,
-    isLoading: Boolean
-) {
+fun DeviceDetailsDialog(onDismiss: () -> Unit) {
     val strings = LocalStrings.current
     val clipboardManager = LocalClipboardManager.current
-    var isEditing by remember { mutableStateOf(false) }
-    var editValue by remember(trackingId) { 
-        mutableStateOf(if (trackingId.startsWith("@")) trackingId.removePrefix("@") else "") 
-    }
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Surface(
-            modifier = Modifier.size(120.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Default.LocationOn,
-                    contentDescription = null,
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        // ID Display and Controls
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier
-                .padding(horizontal = 24.dp)
-                .fillMaxWidth()
-                .shadow(elevation = 2.dp, shape = RoundedCornerShape(20.dp)),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        ) {
-            AnimatedContent(
-                targetState = isEditing,
-                label = "IdEditAnimation",
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(200)) togetherWith fadeOut(animationSpec = tween(200))
-                }
-            ) { editing ->
-                if (editing) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = editValue,
-                            onValueChange = { 
-                                if (it.length <= 20) {
-                                    editValue = it.filter { char -> char.isLetterOrDigit() || char == '_' }
-                                }
-                            },
-                            modifier = Modifier.weight(1f),
-                            prefix = { Text("@", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) },
-                            placeholder = { Text(strings.usernamePlaceholder) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                            )
-                        )
-                        
-                        IconButton(
-                            onClick = { 
-                                if (editValue.length >= 2) {
-                                    onUpdateCustomId("@$editValue")
-                                    isEditing = false
-                                }
-                            },
-                            enabled = editValue.length >= 2
-                        ) {
-                            Icon(Icons.Default.Done, contentDescription = strings.save, tint = MaterialTheme.colorScheme.primary)
-                        }
-                        
-                        IconButton(onClick = { isEditing = false }) {
-                            Icon(Icons.Default.Close, contentDescription = strings.cancel, tint = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                } else {
-                        Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp))
-                                .clickable { 
-                                    clipboardManager.setText(AnnotatedString(trackingId))
-                                }
-                                .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = if (trackingId.startsWith("@")) Icons.Default.Person else Icons.Default.Fingerprint,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(12.dp))
-
-                            Column {
-                                Text(
-                                    text = strings.sessionUuid,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                val displayText = if (trackingId.startsWith("@")) {
-                                    trackingId
-                                } else {
-                                    if (trackingId.length > 13) "${trackingId.take(13)}..." else trackingId
-                                }
-                                Text(
-                                    text = displayText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
-                            }
-                        }
-                        
-                        Row(
-                            modifier = Modifier.padding(end = 16.dp, top = 12.dp, bottom = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = onRefreshId,
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = strings.refresh,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.secondary
-                                )
-                            }
-                            
-                            Spacer(modifier = Modifier.width(4.dp))
-                            
-                            IconButton(
-                                onClick = { isEditing = true },
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = strings.edit,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.secondary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Text(
-            text = strings.readyToSync,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Text(
-            text = strings.startBroadcastingDesc,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        
-        val buttonColor by animateColorAsState(
-            if (isLoading) MaterialTheme.colorScheme.errorContainer 
-            else MaterialTheme.colorScheme.primary,
-            label = "ButtonColor"
-        )
-        val contentColor by animateColorAsState(
-            if (isLoading) MaterialTheme.colorScheme.error 
-            else MaterialTheme.colorScheme.onPrimary,
-            label = "ContentColor"
-        )
-
-        Button(
-            onClick = onStart,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(64.dp)
-                .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = buttonColor,
-                contentColor = contentColor
-            ),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
-        ) {
-            AnimatedContent(
-                targetState = isLoading,
-                label = "ButtonContentTransition"
-            ) { loading ->
-                if (loading) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp), 
-                            color = contentColor,
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            text = strings.cancel, 
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                } else {
-                    Text(
-                        text = strings.startTracking, 
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
+    val deviceUuid = SettingsManager.deviceUuid
+    val platform = getPlatform()
+    AlertDialog(onDismissRequest = onDismiss, title = { Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp)); Spacer(modifier = Modifier.width(12.dp)); Text(strings.deviceInfo, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) } }, text = { Column(modifier = Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { if (platform.deviceName.isNotBlank()) { DeviceInfoItem(strings.deviceName, platform.deviceName, Icons.Default.Person) }; Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { DeviceInfoItem(strings.manufacturer, platform.manufacturer, Icons.Default.Business, Modifier.weight(1f)); DeviceInfoItem(strings.model, platform.model, Icons.Default.PhoneAndroid, Modifier.weight(1f)) }; Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { DeviceInfoItem(strings.platform, platform.name, Icons.Default.Settings, Modifier.weight(1f)); DeviceInfoItem(strings.appVersion, "1.0.0", Icons.Default.Build, Modifier.weight(1f)) }; if (platform.systemId.isNotBlank()) { DeviceInfoItem(strings.systemId, platform.systemId, Icons.Default.Dns) }; Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)).border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), RoundedCornerShape(20.dp)).clickable { clipboardManager.setText(AnnotatedString(deviceUuid)) }.padding(16.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Fingerprint, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(strings.deviceUuid, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold); Spacer(Modifier.weight(1f)); Icon(Icons.Default.ContentCopy, strings.copy, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)) }; Text(deviceUuid, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace) } } }, confirmButton = { Button(onClick = onDismiss, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) { Text(strings.dismiss) } }, shape = RoundedCornerShape(28.dp), containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp)
 }
 
 @Composable
-private fun TrackingView(
-    trackingId: String, 
-    connectionStatus: ConnectionStatus,
-    subscribersCount: Int,
-    restProgress: Float = 0f,
-    onManualUpdate: () -> Unit,
-    onStop: () -> Unit, 
-    onCopy: () -> Unit
-) {
+fun StopConfirmationDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
     val strings = LocalStrings.current
-    var lastUpdateMark by remember { mutableStateOf(TimeSource.Monotonic.markNow()) }
-    
-    val scale by animateFloatAsState(
-        targetValue = if (lastUpdateMark.elapsedNow() < 300.milliseconds) 1.2f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-        label = "IconScale"
-    )
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .graphicsLayer(scaleX = scale, scaleY = scale)
-                .let { mod ->
-                    if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
-                        mod.clickable(
-                            indication = ripple(bounded = false, radius = 60.dp),
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {
-                            lastUpdateMark = TimeSource.Monotonic.markNow()
-                            onManualUpdate()
-                        }
-                    } else mod
-                }
-        ) {
-            val statusColor = Color(0xFF2E7D32)
-            
-            Surface(
-                modifier = Modifier.size(100.dp),
-                shape = CircleShape,
-                color = statusColor.copy(alpha = 0.1f)
-            ) {}
-
-            if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
-                CircularProgressIndicator(
-                    progress = { restProgress },
-                    modifier = Modifier.size(100.dp),
-                    color = statusColor,
-                    strokeWidth = 4.dp,
-                    trackColor = Color.Transparent
-                )
-            }
-            
-            Icon(
-                imageVector = Icons.Default.LocationOn,
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = statusColor
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Text(
-            text = strings.nowTracking,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF2E7D32)
-        )
-        
-        if (subscribersCount > 0) {
-            Surface(
-                color = MaterialTheme.colorScheme.tertiaryContainer,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Visibility,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = strings.adminSubscribed(subscribersCount),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(32.dp))
-        
-        AnimatedVisibility(
-            visible = connectionStatus == ConnectionStatus.CONNECTED,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-                    .clickable { onCopy() }
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = strings.sessionUuid,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-                Text(
-                    text = trackingId,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = strings.tapToCopyId,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(48.dp))
-        
-        OutlinedButton(
-            onClick = onStop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
-        ) {
-            Text(strings.stopTracking)
-        }
-    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(strings.confirmStopTracking, fontWeight = FontWeight.Bold) }, text = { Text(strings.stopTrackingConfirmationMessage) }, confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), shape = RoundedCornerShape(12.dp)) { Text(strings.stopTracking, fontWeight = FontWeight.Bold) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } }, shape = RoundedCornerShape(24.dp), containerColor = MaterialTheme.colorScheme.surface)
 }
 
 @Preview
 @Composable
 fun ClientScreenPreview() {
-    MaterialTheme {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            ClientScreenContent(
-                trackingId = "123e4567-e89b-12d3-a456-426614174000",
-                connectionStatus = ConnectionStatus.IDLE,
-                connectionError = null,
-                subscribersCount = 0,
-                hasBackgroundPermission = true,
-                isBatteryOptimized = false,
-                onToggleTracking = {},
-                onRequestBackgroundPermission = {},
-                onFixBatteryOptimization = {}
-            )
-        }
-    }
-}
-
-@Preview
-@Composable
-fun ClientScreenWarningsPreview() {
-    MaterialTheme {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            ClientScreenContent(
-                trackingId = "123e4567-e89b-12d3-a456-426614174000",
-                connectionStatus = ConnectionStatus.IDLE,
-                connectionError = null,
-                subscribersCount = 0,
-                hasBackgroundPermission = false,
-                isBatteryOptimized = true,
-                onToggleTracking = {},
-                onRequestBackgroundPermission = {},
-                onFixBatteryOptimization = {}
-            )
-        }
-    }
+    MaterialTheme { Surface(color = MaterialTheme.colorScheme.background) { ClientScreenContent(trackingId = "123e4567-e89b-12d3-a456-426614174000", connectionStatus = ConnectionStatus.IDLE, connectionError = null, onToggleTracking = {}) } }
 }
 
 @Preview
 @Composable
 fun ClientScreenTrackingPreview() {
-    MaterialTheme {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            ClientScreenContent(
-                trackingId = "123e4567-e89b-12d3-a456-426614174000",
-                connectionStatus = ConnectionStatus.CONNECTED,
-                connectionError = null,
-                subscribersCount = 2,
-                hasBackgroundPermission = true,
-                isBatteryOptimized = false,
-                onToggleTracking = {},
-                onRequestBackgroundPermission = {},
-                onFixBatteryOptimization = {}
-            )
-        }
-    }
-}
-
-@Preview
-@Composable
-fun ClientScreenErrorPreview() {
-    MaterialTheme {
-        Surface(color = MaterialTheme.colorScheme.background) {
-            ClientScreenContent(
-                trackingId = "",
-                connectionStatus = ConnectionStatus.FAILED,
-                connectionError = "Connection refused: Server unreachable",
-                subscribersCount = 0,
-                hasBackgroundPermission = true,
-                isBatteryOptimized = false,
-                onToggleTracking = {},
-                onRequestBackgroundPermission = {},
-                onFixBatteryOptimization = {}
-            )
-        }
-    }
+    MaterialTheme { Surface(color = MaterialTheme.colorScheme.background) { ClientScreenContent(trackingId = "123e4567-e89b-12d3-a456-426614174000", connectionStatus = ConnectionStatus.CONNECTED, connectionError = null, subscribersCount = 2, onToggleTracking = {}) } }
 }

@@ -24,6 +24,7 @@ import com.example.geosync.network.geoHttpClient
 import com.example.geosync.network.ApiConfig
 import io.ktor.client.plugins.websocket.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.datetime.Clock
 
 class TrackingService : Service() {
@@ -35,7 +36,8 @@ class TrackingService : Service() {
     private var lastLocation: Location? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentTrackingId: String? = null
-    private var manualUpdateRequested = false
+    private val manualUpdateFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private var isStopping = false
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -156,17 +158,23 @@ class TrackingService : Service() {
             }
             "STOP_TRACKING" -> {
                 val id = currentTrackingId
-                if (id != null && SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
-                    // Use runBlocking to ensure the stop signal is sent before the service process is potentially killed
-                    // Since it's a simple POST, it should be very fast.
-                    try {
-                        runBlocking {
-                            withContext(Dispatchers.IO) {
-                                geoHttpClient.stopLocationTracking(id)
+                if (id != null) {
+                    // Send explicit stop signal to server before killing the service
+                    // We use runBlocking to ensure the network request finishes
+                    runBlocking {
+                        try {
+                            withTimeout(2000) {
+                                if (SettingsManager.connectionType == SettingsManager.ConnectionType.REST) {
+                                    geoHttpClient.stopLocationTracking(id)
+                                } else {
+                                    // For WebSocket, we send a manual stop message if possible
+                                    // But the most reliable way is the REST stop endpoint which the server handles for both
+                                    geoHttpClient.stopLocationTracking(id)
+                                }
                             }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
                     }
                 }
                 stopBroadcasting()
@@ -175,7 +183,9 @@ class TrackingService : Service() {
                 stopSelf()
             }
             "MANUAL_UPDATE" -> {
-                manualUpdateRequested = true
+                manualUpdateFlow.tryEmit(Unit)
+                // Immediate UI feedback: reset progress bar
+                TrackingStatus.updateRestProgress(0f)
             }
         }
         return START_STICKY
@@ -194,11 +204,18 @@ class TrackingService : Service() {
 
     private suspend fun CoroutineScope.startWebSocketBroadcasting(id: String) {
         val strings = LocalizationManager.strings
-        while (isActive) {
+        var isFirstConnection = true
+        while (isActive && !isStopping) {
             try {
-                TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
+                if (isFirstConnection) {
+                    TrackingStatus.updateStatus(ConnectionStatus.CONNECTING)
+                } else {
+                    TrackingStatus.updateStatus(ConnectionStatus.RECONNECTING)
+                }
+                
                 geoHttpClient.geoLiveWebSocket {
                     TrackingStatus.updateStatus(ConnectionStatus.CONNECTED)
+                    isFirstConnection = false
                     GeoNotificationManager.show(strings.connectedToRelay, NotificationType.SUCCESS)
                     sendSerialized(LiveLocationMessage(
                         type = "client.register", 
@@ -222,7 +239,7 @@ class TrackingService : Service() {
                         }
                     }
 
-                    while (isActive) {
+                    while (isActive && !isStopping) {
                         val location = lastLocation
                         if (location != null) {
                             println("GeoSync: Sending location from ${location.provider}: ${location.latitude}, ${location.longitude}")
@@ -236,17 +253,26 @@ class TrackingService : Service() {
                         } else {
                             GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
                         }
-                        delay(3000)
+                        
+                        // Wait for 3 seconds OR until manual update requested
+                        withTimeoutOrNull(3000L) {
+                            manualUpdateFlow.collect { 
+                                // Manual update triggered, break timeout and send immediately
+                                throw CancellationException("Manual update")
+                            }
+                        }
                     }
                     receiveJob.cancel()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
-                val errorMsg = strings.connectionFailed(e.message)
-                TrackingStatus.updateStatus(ConnectionStatus.FAILED, errorMsg)
-                GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
-                // Wait before retrying to connect
-                delay(5000)
+                if (e !is CancellationException) {
+                    e.printStackTrace()
+                    val errorMsg = strings.connectionFailed(e.message)
+                    TrackingStatus.updateStatus(ConnectionStatus.RECONNECTING, errorMsg)
+                    GeoNotificationManager.show(errorMsg, NotificationType.ERROR)
+                    // Wait before retrying to connect
+                    delay(5000)
+                }
             } finally {
                 TrackingStatus.updateSubscribers(0)
             }
@@ -262,7 +288,7 @@ class TrackingService : Service() {
         var lastSentLocation: Location? = null
         var lastSentTime = 0L
 
-        while (isActive) {
+        while (isActive && !isStopping) {
             val location = lastLocation
             if (location != null) {
                 val now = System.currentTimeMillis()
@@ -275,8 +301,7 @@ class TrackingService : Service() {
                 // Optimized criteria: 
                 // 1. Moved > 10m AND accuracy is decent (< 50m)
                 // 2. OR 30 seconds passed (heartbeat)
-                // 3. OR manual update requested
-                val shouldSend = manualUpdateRequested || (distance > 10f && location.accuracy < 50f) || timePassed > 30000L
+                val shouldSend = (distance > 10f && location.accuracy < 50f) || timePassed > 30000L
 
                 if (shouldSend) {
                     try {
@@ -285,22 +310,42 @@ class TrackingService : Service() {
                             latitude = location.latitude,
                             longitude = location.longitude,
                             timestamp = Clock.System.now().toString(),
-                            isManual = manualUpdateRequested
+                            isManual = false
                         )
                         lastSentLocation = location
                         lastSentTime = now
                         TrackingStatus.updateRestProgress(0f)
-                        println("GeoSync: Sent REST update. Manual: $manualUpdateRequested, Dist: $distance, Time: $timePassed")
-                        manualUpdateRequested = false
+                        println("GeoSync: Sent REST update. Dist: $distance, Time: $timePassed")
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        // Silent fail for REST, we'll try again next interval
                     }
                 }
             } else {
                 GeoNotificationManager.show(strings.waitingForGpsFix, NotificationType.INFO)
             }
-            delay(2000)
+            
+            // Wait for 2 seconds OR until manual update requested
+            withTimeoutOrNull(2000L) {
+                manualUpdateFlow.collect {
+                    // Manual update triggered, send immediately
+                    val loc = lastLocation
+                    if (loc != null) {
+                        try {
+                            geoHttpClient.sendLocationUpdate(
+                                clientId = id,
+                                latitude = loc.latitude,
+                                longitude = loc.longitude,
+                                timestamp = Clock.System.now().toString(),
+                                isManual = true
+                            )
+                            lastSentLocation = loc
+                            lastSentTime = System.currentTimeMillis()
+                            TrackingStatus.updateRestProgress(0f)
+                            println("GeoSync: Sent MANUAL REST update.")
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                }
+            }
         }
     }
 
